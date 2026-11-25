@@ -18,7 +18,9 @@ async function collect() {
   for (let i = 0; i < 14; i++) { window.scrollBy(0, 900 + Math.random() * 500); await sleep(500 + Math.random() * 500); }
   window.scrollTo(0, 0);
   const text = document.body.innerText || "";
-  const blocked = /접속이 일시적으로 제한|비정상적인 접근|보안 확인|자동입력 방지/.test(text.slice(0, 3000));
+  const head = text.slice(0, 3000);
+  const blocked = /접속이 일시적으로 제한|비정상적인 접근/.test(head);
+  const captcha = !blocked && /보안 확인|자동입력 방지|영수증|정답을 입력|실제 사용자/.test(head);
   const images = [];
   for (const img of document.querySelectorAll("img")) {
     const src = img.currentSrc || img.src || "";
@@ -56,7 +58,7 @@ async function collect() {
              ad: /adProduct/.test(e.className) || /(^|\n)\s*광고/.test(txt),
              img: img ? (img.currentSrc || img.src) : '' };
   }).filter(it => it.title || it.text);
-  return { text, blocked, url: location.href, images: images.slice(0, 200), items };
+  return { text, blocked, captcha, url: location.href, images: images.slice(0, 200), items };
 }
 
 async function start(run, kws, auto) {
@@ -71,6 +73,22 @@ async function start(run, kws, auto) {
     let data = { text: "", blocked: false, url, images: [] };
     try { data = (await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: collect }))[0].result; }
     catch (e) { log(`  '${kw}' 화면을 읽지 못했어요: ${e}`, "err"); }
+    if (data.captcha) {
+      // 보안 확인(영수증 문제 등)이 뜨면 그 탭을 앞으로 띄우고 CH님이 풀 때까지 최대 3분 기다린다
+      log(`  ⚠️ 네이버 보안 확인이 떴어요. 앞으로 띄운 탭에서 직접 풀어 주세요 (3분 기다려요)`, "err");
+      try { await chrome.tabs.update(tab.id, { active: true }); const t = await chrome.tabs.get(tab.id); await chrome.windows.update(t.windowId, { focused: true }); } catch (e) {}
+      for (let w = 0; w < 60; w++) {
+        await sleep(3000);
+        try {
+          const still = (await chrome.scripting.executeScript({ target: { tabId: tab.id },
+            func: () => /보안 확인|자동입력 방지|영수증|정답을 입력|실제 사용자/.test((document.body.innerText || "").slice(0, 3000)) }))[0].result;
+          if (!still) break;
+        } catch (e) {}
+      }
+      await sleep(2000);
+      try { data = (await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: collect }))[0].result; } catch (e) {}
+      if (data.captcha) log(`  '${kw}' 보안 확인을 못 넘어서 건너뛰었어요.`, "err"); else log(`  보안 확인 통과! 계속할게요.`, "ok");
+    }
     try { await chrome.tabs.remove(tab.id); } catch (e) {}
     try {
       await fetch(API + "/result", { method: "POST", headers: { "Content-Type": "application/json" },

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "HGG 네이버 순위 확인",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "HGG 순위 확인 프로그램과 연결해 네이버 가격비교 1페이지 순위를 확인합니다.",
   "permissions": [
     "tabs",

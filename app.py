@@ -184,7 +184,7 @@ with tab1:
         st.session_state["last"] = res
 
     st.markdown("##### 🟢 네이버 가격비교 (웨일 확장 프로그램)")
-    st.caption("웨일 오른쪽 위 확장 아이콘 **HGG 네이버 순위 확인** → [네이버 순위 확인 시작] → 끝나면 아래 버튼. 하루 1~2번만 돌려 주세요.")
+    st.caption("웨일 오른쪽 위 확장 아이콘 **HGG 네이버 순위 확인** → [네이버 순위 확인 시작] → 끝나면 아래 버튼. 몇 분 간격으로 계속 돌리지는 마세요.")
     run = E.latest_inbox()
     if run:
         n_done = len(run.get("results") or {})

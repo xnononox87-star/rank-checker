@@ -792,7 +792,7 @@ def start_receiver():
                     with open(path, encoding="utf-8") as f:
                         run = json.load(f)
                 if self.path.startswith("/result"):
-                    run["results"][data.get("keyword", "")] = {k: data.get(k) for k in ("text", "blocked", "url", "images", "items")}
+                    run["results"][data.get("keyword", "")] = {k: data.get(k) for k in ("text", "blocked", "captcha", "url", "images", "items")}
                 elif self.path.startswith("/done"):
                     run["done"] = True
                 with open(path, "w", encoding="utf-8") as f:
@@ -898,6 +898,9 @@ def parse_inbox(run, cfg):
     for kw, r in (run.get("results") or {}).items():
         if r.get("blocked"):
             out[kw] = {"error": "네이버가 접속을 제한했어요. 몇 시간 뒤에 다시 해 주세요."}
+            continue
+        if r.get("captcha"):
+            out[kw] = {"error": "네이버 보안 확인을 풀지 못해서 건너뛰었어요. 다시 돌려 주세요."}
             continue
         items = _items_from_dom(r.get("items") or [], cfg)
         if len(items) < 5:  # 화면 칸을 못 찾았으면 글자로 읽기
