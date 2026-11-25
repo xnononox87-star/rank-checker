@@ -75,6 +75,26 @@ def load_config():
     return cfg
 
 
+COUPANG_ID_STORES = {
+    # Wing 상품 조회/수정 화면 기준, 이 노출상품ID를 등록한 계정
+    "8823616923": "직구유통·진영상회", "8810539383": "직구유통·진영상회", "8824202996": "직구유통·진영상회",
+    "8938608847": "직구유통·진영상회", "9022257436": "직구유통", "8895428145": "직구유통", "8895423781": "직구유통",
+    "8889241764": "직구유통", "9496289769": "직구유통", "8863409225": "직구유통", "9806216391": "직구유통",
+    "8048983395": "직구유통·풍고고몰", "8632288078": "직구유통·풍고고몰", "9152613642": "직구유통·풍고고몰",
+    "9727662563": "풍고고몰", "8951477386": "풍고고몰", "7601433493": "풍고고몰", "9661461726": "풍고고몰",
+    "9447273400": "풍고고몰", "8593397941": "진영상회", "8889298359": "진영상회", "8919622819": "진영상회",
+}
+
+
+def coupang_stores(cfg, ids):
+    m = dict(COUPANG_ID_STORES)
+    m.update(cfg.get("coupang_id_stores") or {})
+    for i in ids:
+        if i in m:
+            return m[i]
+    return "우리 상점"
+
+
 WING_PRODUCT_IDS = ['8823616923', '8810539383', '8824202996', '8938608847', '8895428145', '8895423781', '8889241764', '9022257436', '9496289769', '8048983395', '8863409225', '8632288078', '9152613642', '9806216391', '9727662563', '8951477386', '7601433493', '9661461726', '9447273400', '8593397941', '8889298359', '8919622819']
 
 
@@ -252,6 +272,38 @@ def _scroll(page, times=8):
         page.wait_for_timeout(random.randint(400, 800))
 
 
+_NAVER_JS = r"""
+() => {
+  const sel = '[class*="product_item__"], [class*="adProduct_item__"], [class*="superSavingProduct_item__"]';
+  let els = [...document.querySelectorAll(sel)];
+  els = els.filter(e => !els.some(o => o !== e && o.contains(e)));
+  return els.map(e => {
+    const t = e.querySelector('[class*="product_title__"], [class*="adProduct_title__"], [class*="superSavingProduct_title__"]');
+    const m = e.querySelector('[class*="product_mall_title__"], [class*="adProduct_mall_title__"], [class*="product_mall__"], [class*="adProduct_mall__"], [class*="superSavingProduct_mall"]');
+    const list = e.querySelector('[class*="product_mall_list__"], [class*="mall_list"]');
+    const img = m ? m.querySelector('img[alt]') : null;
+    let mall = m ? (m.innerText || '').trim() : '';
+    if (!mall && img) mall = img.alt;
+    return {title: t ? t.innerText.trim() : '', mall: mall, mall_list: list ? list.innerText.trim() : '',
+            text: (e.innerText || '').trim(),
+            ad: /adProduct/.test(e.className) || /(^|\n)\s*광고/.test(e.innerText || '')};
+  });
+}
+"""
+
+
+def _store_of(text, mall, cfg):
+    """우리 상품이면 우리 상점 이름을 찾아 돌려준다."""
+    brands = [_norm(b) for b in our_brands(cfg)]
+    if mall and any(b in _norm(mall) for b in brands):
+        return mall.splitlines()[0].strip()
+    for l in (text or "").splitlines():
+        l = l.strip()
+        if 0 < len(l) <= 25 and any(b in _norm(l) for b in brands):
+            return l
+    return (mall or "").splitlines()[0].strip() if mall else ""
+
+
 def _naver_one(page, kw, cfg, progress):
     size = int(cfg.get("naver_page_size", 40))
     url = f"https://search.shopping.naver.com/search/all?query={quote(kw)}&pagingIndex=1&pagingSize={size}&sort=rel"
@@ -259,8 +311,21 @@ def _naver_one(page, kw, cfg, progress):
     page.wait_for_timeout(random.randint(3000, 5000))
     _wait_if_captcha(page, progress, f"네이버 '{kw}'")
     _scroll(page, 10)
-    text = page.inner_text("body")
-    items = parse_naver_text(text, cfg)[:size]
+    items = []
+    try:
+        raw = page.evaluate(_NAVER_JS)
+    except Exception:
+        raw = []
+    for i, it in enumerate([r for r in raw if r.get("title") or r.get("text")][:size], 1):
+        joined = "\n".join([it["title"], it["mall"], it["mall_list"], it["text"]])
+        ours = _title_is_ours(joined, cfg)
+        mall = it["mall"].splitlines()[0].strip() if it["mall"] else ("가격비교" if it["mall_list"] else "")
+        if ours:
+            mall = _store_of(it["mall_list"] + "\n" + it["text"], it["mall"], cfg) or mall
+        items.append({"rank": i, "title": (it["title"] or it["text"].splitlines()[0])[:80], "mall": mall,
+                      "ad": bool(it["ad"]), "ours": ours})
+    if not items:  # 화면 구조가 바뀌었으면 텍스트로 읽기
+        items = parse_naver_text(page.inner_text("body"), cfg)[:size]
     if not items:
         return {"error": "네이버 쇼핑 결과를 읽지 못했어요(보안문자·화면 구조 변경 가능). 붙여넣기로 확인해 주세요."}
     return {"items": items}
@@ -285,8 +350,9 @@ def _coupang_one(page, kw, cfg, progress):
         if not it["is_ad"]:
             organic += 1
         ours = bool(pids & set(it.get("ids") or [it["product_id"]])) or _title_is_ours(it["name"], cfg)
+        stores = coupang_stores(cfg, it.get("ids") or [it["product_id"]]) if ours else ""
         items.append({"rank": i, "organic_rank": None if it["is_ad"] else organic,
-                      "title": it["name"], "price": it["price"], "ad": it["is_ad"],
+                      "title": it["name"], "price": it["price"], "ad": it["is_ad"], "mall": stores,
                       "product_id": it["product_id"],
                       "link": f"https://www.coupang.com/vp/products/{it['product_id']}", "ours": ours})
     return {"items": items}
@@ -509,7 +575,8 @@ def parse_naver_text(text, cfg):
         title = next((l for l in b if len(l) > 12 and "원" not in l[-2:] and not l.startswith("등록일")), b[0])
         ad = any(re.match(r"^광고", l) for l in b)
         ours = _title_is_ours(joined, cfg)
-        items.append({"rank": i, "title": title[:80], "ad": ad, "ours": ours})
+        items.append({"rank": i, "title": title[:80], "ad": ad, "ours": ours,
+                      "mall": _store_of(joined, "", cfg) if ours else ""})
     return items
 
 

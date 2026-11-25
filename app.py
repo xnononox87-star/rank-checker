@@ -42,6 +42,8 @@ def ranks_text(ranks, items=None):
             it = next((x for x in items if x["rank"] == r), None)
             if it and it.get("ad"):
                 tag = "(광고)"
+            if it and it.get("mall"):
+                tag += f" {it['mall']}"
         parts.append(f"{r}위{tag}")
     return ", ".join(parts)
 
@@ -138,6 +140,7 @@ with tab1:
             rows_html.append(f"<tr style='border-top:1px solid #e5e7eb'><td style='padding:10px 8px'><b>{kw}</b></td>"
                              f"<td>{cells[0]}</td><td>{cells[1]}</td></tr>")
         rows_html.append("</table>")
+        rows_html.append("<div style='color:#888;font-size:0.8rem;margin-top:6px'>쿠팡은 검색 화면에 판매자가 안 나와서, 그 노출상품을 등록한 우리 계정 이름으로 표시해요. 여러 계정이 같은 노출상품을 쓰면 실제로는 그중 아이템위너 한 곳이 노출돼요.</div>")
         st.markdown("".join(rows_html), unsafe_allow_html=True)
         st.write("")
         st.markdown("**키워드별 자세히 보기** (우리 상품은 ⭐)")
@@ -157,8 +160,8 @@ with tab1:
                         df = pd.DataFrame(r["items"])
                         df["우리"] = df["ours"].map(lambda x: "⭐" if x else "")
                         df["광고"] = df["ad"].map(lambda x: "광고" if x else "")
-                        show = ["rank", "우리", "광고", "title", "price"] + (["mall", "category"] if plat == "naver" else [])
-                        df = df[[c for c in show if c in df.columns]].rename(columns={"rank": "순위", "title": "상품명", "price": "가격", "mall": "판매처", "category": "카테고리"})
+                        show = ["rank", "우리", "광고", "mall", "title", "price"]
+                        df = df[[c for c in show if c in df.columns]].rename(columns={"rank": "순위", "title": "상품명", "price": "가격", "mall": "상점", "category": "카테고리"})
                         only = st.toggle("우리 상품만", key=f"only_{plat}_{kw}")
                         if only:
                             df = df[df["우리"] == "⭐"]
