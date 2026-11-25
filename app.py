@@ -132,7 +132,7 @@ with tab1:
         w_coupang = st.checkbox("쿠팡", value=True)
         use_whale = w_naver or w_coupang
         use_naver = use_coupang = False  # 크롬 자동 조종은 접속 차단 때문에 사용 안 함 (웨일 확장이 대신 검색)
-        st.caption("웨일 확장 'HGG 네이버 순위 확인'이 웨일 **시크릿 창**에서 네이버·쿠팡을 동시에 검색해요. 끝나면 저절로 닫혀요. 웨일이 켜져 있어야 해요.")
+        st.caption("웨일 확장이 **쿠팡 창·네이버 창**을 하나씩 열고 키워드마다 **새 탭**으로 검색해요. 끝나도 탭은 남겨 두니 결과와 비교해 보세요. 웨일이 켜져 있어야 해요.")
     st.caption(f"'상단' = 1페이지 {cfg['top_n']}위 이내 · 순위는 1페이지 안에서 몇 번째인지예요. 같은 상품을 여러 개 등록했다면 모두 표시돼요.")
 
     if st.button("▶ 순위 확인 시작", type="primary", disabled=not kws):
