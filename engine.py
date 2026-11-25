@@ -246,16 +246,16 @@ _COUPANG_JS = r"""
 
 
 def _wait_if_captcha(page, progress, label):
-    """보안문자(캡차)가 뜨면 CH님이 직접 풀 때까지 최대 90초 기다린다."""
-    words = ["보안 확인", "자동입력 방지", "captcha", "CAPTCHA", "보안문자", "로봇이 아닙니다"]
+    """보안문자(캡차·영수증 문제)가 뜨면 CH님이 직접 풀 때까지 최대 3분 기다린다."""
+    words = ["보안 확인", "자동입력 방지", "captcha", "CAPTCHA", "보안문자", "로봇이 아닙니다", "영수증", "정답을 입력", "실제 사용자"]
     try:
         body = page.inner_text("body")[:3000]
     except Exception:
         return
     if any(w in body for w in words):
         if progress:
-            progress(f"{label}: 보안문자가 떴어요. 열린 크롬 창에서 직접 풀어 주세요 (90초 기다려요)")
-        for _ in range(45):
+            progress(f"{label}: 보안 확인(영수증 문제 등)이 떴어요. 열린 크롬 창에서 직접 풀어 주세요 (3분 기다려요)")
+        for _ in range(90):
             page.wait_for_timeout(2000)
             try:
                 body = page.inner_text("body")[:3000]
