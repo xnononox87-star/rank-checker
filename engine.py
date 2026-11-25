@@ -646,14 +646,19 @@ def _parse_naver_v2(lines, cfg):
             continue
         ad = nxt == "광고"
         mall = ""
-        for l in block[1:6]:
-            if l in _NAVER_SKIP_MALL or l == title:
+        for l in block[1:6]:  # 상점명은 '광고' 다음, 상품명이 다시 나오기 전에 있다
+            if l == title or l == "새 창에서 열림" or re.fullmatch(r"[\d,]+|원|.*할인.*|할인 전 판매가.*", l):
+                break
+            if l in _NAVER_SKIP_MALL:
                 continue
             mall = l
             break
         rank += 1
+        mall = re.sub(r"\s*정보$", "", mall).strip()  # 가격비교 화면의 'HGG정보' -> 'HGG'
         joined = "\n".join(block)
         ours = _title_is_ours(title + "\n" + mall, cfg)
+        if ours and ad and not mall:
+            mall = "우리 광고"
         price = next((block[k - 1] for k in range(1, len(block)) if block[k] == "원" and re.fullmatch(r"[\d,]+", block[k - 1])), "")
         items.append({"rank": rank, "title": title[:80], "mall": mall, "price": price, "ad": ad, "ours": ours})
     return items
@@ -861,12 +866,12 @@ def latest_inbox():
 
 
 def _match_image(title, images):
-    key = _norm(title)[:14]
-    if not key:
-        return ""
-    for im in images or []:
-        if key in _norm(im.get("alt", "")) or key in _norm(im.get("text", "")):
-            return im.get("src", "")
+    t = _norm(title)
+    keys = [k for k in (t[:14], t[5:19], t[-14:]) if len(k) >= 8]
+    for key in keys:
+        for im in images or []:
+            if key in _norm(im.get("alt", "")) or key in _norm(im.get("text", "")):
+                return im.get("src", "")
     return ""
 
 

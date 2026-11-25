@@ -23,9 +23,16 @@ async function collect() {
   for (const img of document.querySelectorAll("img")) {
     const src = img.currentSrc || img.src || "";
     if (!src.startsWith("http") || (img.naturalWidth && img.naturalWidth < 60)) continue;
-    let box = img, t = "";
-    for (let k = 0; k < 7 && box; k++) { box = box.parentElement; t = (box && box.innerText) || ""; if (t.length > 20) break; }
-    images.push({ src, text: t.slice(0, 300), alt: img.alt || "" });
+    // 상품 칸(‘찜하기’가 들어 있는 가장 가까운 상자)까지 올라가서 그 칸의 글자를 같이 보낸다
+    let box = img, t = "", fallback = "";
+    for (let k = 0; k < 12 && box; k++) {
+      box = box.parentElement; if (!box) break;
+      t = box.innerText || "";
+      if (!fallback && t.length > 20) fallback = t;
+      if (t.includes("찜하기") || t.includes("찜")) break;
+      if (t.length > 1500) { t = fallback; break; }
+    }
+    images.push({ src, text: (t || fallback).slice(0, 400), alt: img.alt || "" });
   }
   return { text, blocked, url: location.href, images: images.slice(0, 200) };
 }
