@@ -766,6 +766,10 @@ def start_receiver():
             self._send(204)
 
         def do_GET(self):
+            if self.path.startswith("/pending"):
+                job = take_pending()
+                self._send(200, job or {})
+                return
             if self.path.startswith("/keywords"):
                 run_id = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
                 self._send(200, {"run_id": run_id, "keywords": load_config().get("keywords", [])})
@@ -801,6 +805,48 @@ def start_receiver():
         return None  # 이미 켜져 있음
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv
+
+
+PENDING_PATH = os.path.join(DATA_DIR, "naver_pending.json")
+
+
+def request_naver(keywords):
+    """순위 프로그램에서 네이버 확인을 요청 -> 웨일 확장이 15초 안에 가져가서 시작"""
+    run_id = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    with open(PENDING_PATH, "w", encoding="utf-8") as f:
+        json.dump({"run_id": run_id, "keywords": list(keywords), "taken": False, "time": time.time()}, f, ensure_ascii=False)
+    return run_id
+
+
+def take_pending():
+    try:
+        with open(PENDING_PATH, encoding="utf-8") as f:
+            job = json.load(f)
+    except Exception:
+        return None
+    if job.get("taken") or time.time() - job.get("time", 0) > 600:
+        return None
+    job["taken"] = True
+    with open(PENDING_PATH, "w", encoding="utf-8") as f:
+        json.dump(job, f, ensure_ascii=False)
+    return {"run_id": job["run_id"], "keywords": job["keywords"]}
+
+
+def pending_state(run_id):
+    """('waiting'|'running'|'done', 완료된 키워드 수)"""
+    try:
+        with open(PENDING_PATH, encoding="utf-8") as f:
+            job = json.load(f)
+    except Exception:
+        job = {}
+    path = os.path.join(INBOX_DIR, f"{run_id}.json")
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
+            run = json.load(f)
+        return ("done" if run.get("done") else "running"), len(run.get("results") or {})
+    if job.get("run_id") == run_id and job.get("taken"):
+        return "running", 0
+    return "waiting", 0
 
 
 def latest_inbox():

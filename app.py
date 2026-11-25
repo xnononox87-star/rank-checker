@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import datetime as dt
 import os
+import time
 
 import pandas as pd
 import streamlit as st
@@ -128,15 +129,17 @@ with tab1:
         kws = st.multiselect("확인할 키워드", cfg["keywords"], default=cfg["keywords"])
     with c2:
         use_coupang = st.checkbox("쿠팡 (자동)", value=True)
-        use_naver = st.checkbox("네이버 쇼핑 (자동)", value=False, disabled=not cfg.get("naver_auto"),
-                                help="네이버가 자동 검색을 막아서(접속 제한) 꺼 두었어요. 네이버는 아래 '네이버 붙여넣기'로 확인해요.")
-        st.caption("확인하는 동안 크롬 창이 따로 열려요. 끝날 때까지 건드리지 마세요.")
+        use_whale = st.checkbox("네이버 가격비교 (웨일 확장)", value=True,
+                                help="웨일에 설치한 'HGG 네이버 순위 확인'이 웨일 뒤쪽 탭에서 천천히 검색해요. 웨일이 켜져 있어야 해요.")
+        use_naver = False  # 네이버 자동 크롬은 접속 제한 때문에 사용 안 함
+        st.caption("쿠팡은 크롬 창이 따로 열리고, 네이버는 웨일 뒤쪽 탭에서 확인해요. 둘 다 끝날 때까지 그 창·탭은 닫지 마세요.")
     st.caption(f"'상단' = 1페이지 {cfg['top_n']}위 이내 · 순위는 1페이지 안에서 몇 번째인지예요. 같은 상품을 여러 개 등록했다면 모두 표시돼요.")
 
     if st.button("▶ 순위 확인 시작", type="primary", disabled=not kws):
         run_time = E.now_str()
         prev = st.session_state.get("last") or {}
         res = {"time": run_time, "naver": {} if use_naver else dict(prev.get("naver") or {}), "coupang": {}}
+        naver_run = E.request_naver(kws) if use_whale else None
         if use_naver or use_coupang:
             status_box = st.empty()
             try:
@@ -150,6 +153,24 @@ with tab1:
                 if use_coupang:
                     res["coupang"] = {kw: {"error": msg} for kw in kws}
             status_box.empty()
+        if naver_run:  # 웨일 확장이 끝날 때까지 기다렸다가 가져오기 (최대 10분)
+            wait_box = st.empty()
+            t0 = time.time()
+            while True:
+                state, n = E.pending_state(naver_run)
+                if state == "done":
+                    break
+                if state == "waiting" and time.time() - t0 > 60:
+                    wait_box.warning("웨일 확장이 응답하지 않아요. 웨일이 켜져 있는지, whale://extensions 에서 'HGG 네이버 순위 확인'의 [새로고침]을 눌렀는지 확인해 주세요.")
+                    break
+                if time.time() - t0 > 600:
+                    wait_box.warning("네이버 확인이 오래 걸려서 기다리기를 멈췄어요. 끝나면 [네이버 결과 불러오기]를 눌러 주세요.")
+                    break
+                wait_box.info(f"네이버 가격비교 확인 중... 웨일 뒤쪽 탭에서 진행 ({n}/{len(kws)})")
+                time.sleep(3)
+            wait_box.empty()
+            st.session_state["last"] = res
+            st.session_state.pop("inbox_loaded", None)
         for plat in ("naver", "coupang"):
             if plat == "naver" and not use_naver:
                 continue

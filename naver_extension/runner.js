@@ -30,12 +30,8 @@ async function collect() {
   return { text, blocked, url: location.href, images: images.slice(0, 200) };
 }
 
-btn.onclick = async () => {
+async function start(run, kws, auto) {
   btn.disabled = true; logBox.innerHTML = "";
-  let job;
-  try { job = await (await fetch(API + "/keywords")).json(); }
-  catch (e) { log("순위 확인 프로그램에 연결하지 못했어요. run.bat 을 먼저 켜 주세요.", "err"); btn.disabled = false; return; }
-  const run = job.run_id, kws = job.keywords || [];
   log(`키워드 ${kws.length}개를 확인할게요. (키워드 사이에 15~30초씩 쉬어요)`);
   for (let i = 0; i < kws.length; i++) {
     const kw = kws[i];
@@ -47,13 +43,30 @@ btn.onclick = async () => {
     try { data = (await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: collect }))[0].result; }
     catch (e) { log(`  '${kw}' 화면을 읽지 못했어요: ${e}`, "err"); }
     try { await chrome.tabs.remove(tab.id); } catch (e) {}
-    await fetch(API + "/result", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ run_id: run, keyword: kw, ...data }) });
+    try {
+      await fetch(API + "/result", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ run_id: run, keyword: kw, ...data }) });
+    } catch (e) { log("순위 확인 프로그램과 연결이 끊겼어요. run.bat 이 켜져 있는지 확인해 주세요.", "err"); break; }
     if (data.blocked) { log("네이버가 접속을 제한했어요. 확인을 멈출게요. 몇 시간 뒤에 다시 해 주세요.", "err"); break; }
     log(`  '${kw}' 완료`, "ok");
     if (i < kws.length - 1) await sleep(15000 + Math.random() * 15000);
   }
-  await fetch(API + "/done", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ run_id: run }) });
-  log("끝났어요! 순위 확인 프로그램 화면에서 [네이버 결과 불러오기]를 눌러 주세요.", "ok");
+  try { await fetch(API + "/done", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ run_id: run }) }); } catch (e) {}
+  log("끝났어요! 순위 확인 프로그램 화면에 자동으로 반영돼요.", "ok");
   btn.disabled = false;
+  if (auto) { await sleep(3000); const t = await chrome.tabs.getCurrent(); if (t) chrome.tabs.remove(t.id); }
+}
+
+btn.onclick = async () => {
+  let job;
+  try { job = await (await fetch(API + "/keywords")).json(); }
+  catch (e) { log("순위 확인 프로그램에 연결하지 못했어요. run.bat 을 먼저 켜 주세요.", "err"); return; }
+  start(job.run_id, job.keywords || [], false);
 };
+
+// 순위 프로그램이 시킨 자동 실행
+const q = new URLSearchParams(location.search);
+if (q.get("auto") === "1") {
+  document.title = "HGG 네이버 순위 확인 (자동)";
+  start(q.get("run"), JSON.parse(q.get("kws") || "[]"), true);
+}
