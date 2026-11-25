@@ -64,7 +64,18 @@ def load_config():
         cfg.update({"keywords": kws, "kw_v2": True})
         if os.path.exists(CONFIG_PATH):
             save_config(cfg)
+    if not cfg.get("cp_ids_v1"):  # 1회: Wing 화면에서 확인한 쿠팡 노출상품ID 추가 (직구유통·풍고고몰·진영상회)
+        cur = list(cfg.get("our_coupang_product_ids") or [])
+        for i in WING_PRODUCT_IDS:
+            if i not in cur:
+                cur.append(i)
+        cfg.update({"our_coupang_product_ids": cur, "cp_ids_v1": True})
+        if os.path.exists(CONFIG_PATH):
+            save_config(cfg)
     return cfg
+
+
+WING_PRODUCT_IDS = ['8823616923', '8810539383', '8824202996', '8938608847', '8895428145', '8895423781', '8889241764', '9022257436', '9496289769', '8048983395', '8863409225', '8632288078', '9152613642', '9806216391', '9727662563', '8951477386', '7601433493', '9661461726', '9447273400', '8593397941', '8889298359', '8919622819']
 
 
 def save_config(cfg):
