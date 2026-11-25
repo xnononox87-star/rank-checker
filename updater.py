@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 import zipfile
 
 import requests
@@ -35,10 +36,17 @@ def local_version():
 
 
 def remote_version():
-    url = f"https://raw.githubusercontent.com/{_repo()}/{BRANCH}/VERSION"
-    r = requests.get(url, timeout=10, headers={"Cache-Control": "no-cache"})
-    r.raise_for_status()
-    return r.text.strip()
+    """GitHub에서 최신 버전 번호 확인 (캐시 때문에 늦게 보이는 걸 막으려고 API 먼저 사용)"""
+    try:
+        r = requests.get(f"https://api.github.com/repos/{_repo()}/contents/VERSION?ref={BRANCH}",
+                         headers={"Accept": "application/vnd.github.raw"}, timeout=10)
+        r.raise_for_status()
+        return r.text.strip()
+    except Exception:
+        url = f"https://raw.githubusercontent.com/{_repo()}/{BRANCH}/VERSION?t={int(time.time())}"
+        r = requests.get(url, timeout=10, headers={"Cache-Control": "no-cache"})
+        r.raise_for_status()
+        return r.text.strip()
 
 
 def _vt(v):
