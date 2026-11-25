@@ -657,8 +657,8 @@ def _parse_naver_v2(lines, cfg):
         mall = re.sub(r"\s*정보$", "", mall).strip()  # 가격비교 화면의 'HGG정보' -> 'HGG'
         joined = "\n".join(block)
         ours = _title_is_ours(title + "\n" + mall, cfg)
-        if ours and ad and not mall:
-            mall = "우리 광고"
+        if ours and not mall:
+            mall = "우리 상점"
         price = next((block[k - 1] for k in range(1, len(block)) if block[k] == "원" and re.fullmatch(r"[\d,]+", block[k - 1])), "")
         items.append({"rank": rank, "title": title[:80], "mall": mall, "price": price, "ad": ad, "ours": ours})
     return items

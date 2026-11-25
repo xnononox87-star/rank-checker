@@ -71,7 +71,7 @@ def rank_cards(ranks, items):
                f"border-radius:6px;border:1px solid #ddd;display:block;margin:0 auto 3px'>") if uri else \
               "<div style='width:86px;height:86px;border-radius:6px;background:#f1f1f1;margin:0 auto 3px;" \
               "display:flex;align-items:center;justify-content:center;color:#aaa;font-size:0.7rem'>사진 없음</div>"
-        ad = "<span style='color:#c2410c'>(광고)</span>" if it.get("ad") else ""
+        ad = ""
         out.append(f"<div title='{(it.get('title') or '').replace(chr(39), '')}' style='display:inline-block;width:96px;margin:4px 4px 2px 0;"
                    f"vertical-align:top;text-align:center;font-size:0.78rem;line-height:1.25'>{img}"
                    f"<b>{r}위</b>{ad}<br><span style='color:#555'>{it.get('mall', '')}</span></div>")
@@ -87,7 +87,7 @@ def ranks_text(ranks, items=None):
         if items:
             it = next((x for x in items if x["rank"] == r), None)
             if it and it.get("ad"):
-                tag = "(광고)"
+                tag = ""
             if it and it.get("mall"):
                 tag += f" {it['mall']}"
         parts.append(f"{r}위{tag}")
@@ -276,7 +276,7 @@ with tab1:
                 r = res[plat].get(kw) or {}
                 for it in r.get("items", []):
                     if it.get("ours") and it.get("shot") and os.path.exists(it["shot"]):
-                        tag = "(광고) " if it.get("ad") else ""
+                        tag = ""
                         shots.append((it["shot"], f"{kw} · {label} {it['rank']}위 {tag}{it.get('mall', '')}"))
         if shots:
             with st.expander("📸 우리 상품 캡처 크게 보기"):
@@ -306,7 +306,7 @@ with tab1:
                         df = pd.DataFrame(r["items"])
                         df["우리"] = df["ours"].map(lambda x: "⭐" if x else "")
                         df["광고"] = df["ad"].map(lambda x: "광고" if x else "")
-                        show = ["rank", "우리", "광고", "mall", "title", "price"]
+                        show = ["rank", "우리", "mall", "title", "price"]
                         df = df[[c for c in show if c in df.columns]].rename(columns={"rank": "순위", "title": "상품명", "price": "가격", "mall": "상점", "category": "카테고리"})
                         for it in r["items"]:
                             if it.get("ours") and it.get("shot") and os.path.exists(it["shot"]):
@@ -415,7 +415,7 @@ with tab3:
             s = E.summarize(items, cfg)
             st.markdown(f"{badge(s['status'])} 우리 상품 위치: **{ranks_text(s['our_ranks'], items)}** (상품 {len(items)}개 인식)", unsafe_allow_html=True)
             if items:
-                st.dataframe(pd.DataFrame(items).rename(columns={"rank": "순위", "title": "상품명", "ad": "광고", "ours": "우리"}),
+                st.dataframe(pd.DataFrame(items).drop(columns=["ad"], errors="ignore").rename(columns={"rank": "순위", "title": "상품명", "ours": "우리", "mall": "상점", "price": "가격"}),
                              hide_index=True, width="stretch")
             if items and pkw != "(선택)":
                 E.append_history({"time": E.now_str(), "platform": "naver", "keyword": pkw, "ok": True,
