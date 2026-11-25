@@ -615,7 +615,51 @@ def parse_report(data, filename):
 _NAVER_END = re.compile(r"(신고하기|정보\s*수정\s*요청)")
 
 
+_NAVER_SKIP_MALL = {"광고", "공식", "우수셀러", "해외", "새 창에서 열림", "오늘 클릭", "스토어"}
+
+
 def parse_naver_text(text, cfg):
+    """네이버 쇼핑 검색결과 화면을 Ctrl+A, Ctrl+C 로 복사한 텍스트를 상품 단위로 나눈다.
+    (2026 네이버플러스 스토어 화면: 상품마다 '상품명 찜하기' 줄로 시작)"""
+    lines = [l.strip() for l in (text or "").splitlines()]
+    if any(l.endswith(" 찜하기") for l in lines):
+        return _parse_naver_v2(lines, cfg)
+    return _parse_naver_v1(text, cfg)
+
+
+def _parse_naver_v2(lines, cfg):
+    start = 0
+    for i, l in enumerate(lines):
+        if l == "상품목록":
+            start = i + 1
+            break
+    starts = [i for i in range(start, len(lines)) if lines[i].endswith(" 찜하기")]
+    items, rank = [], 0
+    for n, i in enumerate(starts):
+        end = starts[n + 1] if n + 1 < len(starts) else len(lines)
+        block = [l for l in lines[i:end] if l]
+        title = block[0][:-len(" 찜하기")].strip()
+        nxt = block[1] if len(block) > 1 else ""
+        before = " ".join(lines[max(start, i - 6):i])
+        # 개인 맞춤 추천·브랜드 혜택 묶음은 순위 자리에서 뺀다
+        if nxt == "오늘 클릭" or "맞춤 상품" in before or "브랜드 혜택" in before or (nxt.startswith("광고") and len(nxt) > 4):
+            continue
+        ad = nxt == "광고"
+        mall = ""
+        for l in block[1:6]:
+            if l in _NAVER_SKIP_MALL or l == title:
+                continue
+            mall = l
+            break
+        rank += 1
+        joined = "\n".join(block)
+        ours = _title_is_ours(title + "\n" + mall, cfg)
+        price = next((block[k - 1] for k in range(1, len(block)) if block[k] == "원" and re.fullmatch(r"[\d,]+", block[k - 1])), "")
+        items.append({"rank": rank, "title": title[:80], "mall": mall, "price": price, "ad": ad, "ours": ours})
+    return items
+
+
+def _parse_naver_v1(text, cfg):
     """네이버 쇼핑 검색결과 화면을 Ctrl+A, Ctrl+C 로 복사한 텍스트(또는 캡처 OCR 결과)를 상품 단위로 나눈다."""
     lines = [l.strip() for l in (text or "").splitlines() if l.strip()]
     start = 0
