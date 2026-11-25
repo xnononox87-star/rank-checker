@@ -13,6 +13,15 @@ ensureAlarm();
 
 chrome.alarms.onAlarm.addListener(async (a) => {
   if (a.name !== "poll") return;
+  // 프로그램이 업데이트돼서 폴더의 확장 파일이 새것이면 스스로 새로고침 (↻ 안 눌러도 됨)
+  try {
+    const v = (await (await fetch(API + "/ext_version")).json()).version;
+    const running = await chrome.tabs.query({ url: chrome.runtime.getURL("runner.html") + "*" });
+    if (v && v !== chrome.runtime.getManifest().version && running.length === 0) {
+      const { tried } = await chrome.storage.local.get("tried");
+      if (tried !== v) { await chrome.storage.local.set({ tried: v }); chrome.runtime.reload(); return; }
+    }
+  } catch (e) {}
   try {
     const j = await (await fetch(API + "/pending")).json();
     if (j && j.run_id) {

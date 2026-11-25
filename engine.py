@@ -771,6 +771,13 @@ def start_receiver():
             self._send(204)
 
         def do_GET(self):
+            if self.path.startswith("/ext_version"):
+                try:
+                    with open(os.path.join(BASE, "naver_extension", "manifest.json"), encoding="utf-8") as f:
+                        self._send(200, {"version": json.load(f).get("version", "")})
+                except Exception:
+                    self._send(200, {"version": ""})
+                return
             if self.path.startswith("/pending"):
                 job = take_pending()
                 self._send(200, job or {})
