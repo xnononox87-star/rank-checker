@@ -83,14 +83,16 @@ with tab1:
     with c1:
         kws = st.multiselect("확인할 키워드", cfg["keywords"], default=cfg["keywords"])
     with c2:
-        use_naver = st.checkbox("네이버 쇼핑", value=True)
-        use_coupang = st.checkbox("쿠팡", value=True)
+        use_coupang = st.checkbox("쿠팡 (자동)", value=True)
+        use_naver = st.checkbox("네이버 쇼핑 (자동)", value=False, disabled=not cfg.get("naver_auto"),
+                                help="네이버가 자동 검색을 막아서(접속 제한) 꺼 두었어요. 네이버는 아래 '네이버 붙여넣기'로 확인해요.")
         st.caption("확인하는 동안 크롬 창이 따로 열려요. 끝날 때까지 건드리지 마세요.")
     st.caption(f"'상단' = 1페이지 {cfg['top_n']}위 이내 · 순위는 1페이지 안에서 몇 번째인지예요. 같은 상품을 여러 개 등록했다면 모두 표시돼요.")
 
     if st.button("▶ 순위 확인 시작", type="primary", disabled=not kws):
         run_time = E.now_str()
-        res = {"time": run_time, "naver": {}, "coupang": {}}
+        prev = st.session_state.get("last") or {}
+        res = {"time": run_time, "naver": {} if use_naver else dict(prev.get("naver") or {}), "coupang": {}}
         if use_naver or use_coupang:
             status_box = st.empty()
             try:
@@ -105,6 +107,8 @@ with tab1:
                     res["coupang"] = {kw: {"error": msg} for kw in kws}
             status_box.empty()
         for plat in ("naver", "coupang"):
+            if plat == "naver" and not use_naver:
+                continue
             for kw, r in res[plat].items():
                 if "items" in r:
                     s = E.summarize(r["items"], cfg)
@@ -113,6 +117,34 @@ with tab1:
                     E.append_history({"time": run_time, "platform": plat, "keyword": kw, "ok": True,
                                       "our_ranks": s["our_ranks"], "status": s["status"]})
         st.session_state["last"] = res
+
+    with st.expander("📋 네이버 쇼핑 붙여넣기 (네이버는 이렇게 확인해요)", expanded=False):
+        st.markdown("1) 키워드 버튼을 눌러 평소 브라우저에서 네이버 쇼핑을 열고 → 2) 화면에서 **Ctrl+A → Ctrl+C** → "
+                    "3) 그 키워드 칸에 **Ctrl+V** → 4) 맨 아래 **[네이버 결과 반영]**")
+        pasted = {}
+        for kw in (kws or cfg["keywords"]):
+            a, b = st.columns([1, 3])
+            a.link_button(f"'{kw}' 열기", f"https://search.shopping.naver.com/search/all?query={E.quote(kw)}")
+            pasted[kw] = b.text_area(f"{kw} 붙여넣기", key=f"np_{kw}", height=68, label_visibility="collapsed",
+                                     placeholder=f"'{kw}' 검색 화면 전체를 여기에 붙여넣기")
+        if st.button("네이버 결과 반영", type="primary"):
+            run_time = E.now_str()
+            last = st.session_state.get("last") or {"time": run_time, "naver": {}, "coupang": {}}
+            done = 0
+            for kw, text in pasted.items():
+                if not text.strip():
+                    continue
+                items = E.parse_naver_text(text, cfg)
+                if not items:
+                    last["naver"][kw] = {"error": "붙여넣은 내용에서 상품을 찾지 못했어요. 검색 화면 전체(Ctrl+A)를 복사했는지 확인해 주세요."}
+                    continue
+                sm = E.summarize(items, cfg)
+                last["naver"][kw] = {"items": items, "summary": sm, "before": E.previous_ranks("naver", kw, before_time=run_time)}
+                E.append_history({"time": run_time, "platform": "naver", "keyword": kw, "ok": True,
+                                  "our_ranks": sm["our_ranks"], "status": sm["status"], "source": "붙여넣기"})
+                done += 1
+            st.session_state["last"] = last
+            st.success(f"{done}개 키워드를 반영했어요. 아래 결과 표에서 확인하세요.")
 
     res = st.session_state.get("last")
     if not res:

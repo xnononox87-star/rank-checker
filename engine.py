@@ -415,7 +415,7 @@ def browser_search_many(keywords, cfg, do_naver=True, do_coupang=True, progress=
     jobs = [("naver", kw) for kw in keywords if do_naver] + [("coupang", kw) for kw in keywords if do_coupang]
     with sync_playwright() as p:
         ctx = p.chromium.launch_persistent_context(
-            profile, channel="chrome", headless=False, locale="ko-KR",
+            profile, channel="chrome", headless=False, locale="ko-KR", chromium_sandbox=True,
             viewport={"width": 1300, "height": 900},
             args=["--disable-blink-features=AutomationControlled"],
         )
