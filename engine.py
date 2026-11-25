@@ -327,6 +327,10 @@ _NAVER_JS = r"""
 
 def _store_of(text, mall, cfg):
     """우리 상품이면 우리 상점 이름을 찾아 돌려준다."""
+    return re.sub(r"\s*(구매)?정보$", "", _store_of_raw(text, mall, cfg)).strip()
+
+
+def _store_of_raw(text, mall, cfg):
     brands = [_norm(b) for b in our_brands(cfg)]
     if mall and any(b in _norm(mall) for b in brands):
         return mall.splitlines()[0].strip()
