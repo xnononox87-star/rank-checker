@@ -792,7 +792,7 @@ def start_receiver():
                     with open(path, encoding="utf-8") as f:
                         run = json.load(f)
                 if self.path.startswith("/result"):
-                    run["results"][data.get("keyword", "")] = {k: data.get(k) for k in ("text", "blocked", "url", "images")}
+                    run["results"][data.get("keyword", "")] = {k: data.get(k) for k in ("text", "blocked", "url", "images", "items")}
                 elif self.path.startswith("/done"):
                     run["done"] = True
                 with open(path, "w", encoding="utf-8") as f:
@@ -875,6 +875,23 @@ def _match_image(title, images):
     return ""
 
 
+def _items_from_dom(raw, cfg):
+    """확장 프로그램이 상품 칸 단위로 읽어 온 결과 -> 순위 목록 (광고 포함 화면 순서)"""
+    out = []
+    for i, it in enumerate(raw[:60], 1):
+        title = (it.get("title") or (it.get("text") or "").split("\n")[0]).strip()
+        mall = re.sub(r"\s*정보$", "", (it.get("mall") or "").split("\n")[0]).strip()
+        joined = "\n".join([title, it.get("mall") or "", it.get("mall_list") or ""])
+        ours = _title_is_ours(joined, cfg)
+        if ours:
+            mall = _store_of(it.get("mall_list") or "", it.get("mall") or "", cfg) or mall
+        elif not mall and it.get("mall_list"):
+            mall = "가격비교"
+        out.append({"rank": i, "title": title[:80], "mall": mall, "ad": bool(it.get("ad")), "ours": ours,
+                    "thumb_url": it.get("img", "") if ours else ""})
+    return out
+
+
 def parse_inbox(run, cfg):
     """확장 프로그램이 보낸 화면 -> 키워드별 순위 결과"""
     out = {}
@@ -882,7 +899,9 @@ def parse_inbox(run, cfg):
         if r.get("blocked"):
             out[kw] = {"error": "네이버가 접속을 제한했어요. 몇 시간 뒤에 다시 해 주세요."}
             continue
-        items = parse_naver_text(r.get("text") or "", cfg)
+        items = _items_from_dom(r.get("items") or [], cfg)
+        if len(items) < 5:  # 화면 칸을 못 찾았으면 글자로 읽기
+            items = parse_naver_text(r.get("text") or "", cfg)
         if not items:
             raw = os.path.join(INBOX_DIR, f"raw_{run.get('run_id')}_{_safe(kw)}.txt")
             with open(raw, "w", encoding="utf-8") as f:

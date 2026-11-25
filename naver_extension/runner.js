@@ -34,7 +34,29 @@ async function collect() {
     }
     images.push({ src, text: (t || fallback).slice(0, 400), alt: img.alt || "" });
   }
-  return { text, blocked, url: location.href, images: images.slice(0, 200) };
+  // 상품 칸 단위로 읽기 (가격비교 화면): 칸 안에 오른쪽 판매처 칸까지 같이 들어 있어 순위가 밀리지 않는다
+  const sels = ['[class*="product_item__"], [class*="adProduct_item__"], [class*="superSavingProduct_item__"]',
+                '[class*="basicList_item"]', 'li[class*="product_list_item"], div[class*="product_list_item"]'];
+  let best = [];
+  for (const sel of sels) {
+    let els = [...document.querySelectorAll(sel)];
+    els = els.filter(e => !els.some(o => o !== e && o.contains(e)));
+    if (els.length > best.length) best = els;
+  }
+  const items = best.map(e => {
+    const q = s => e.querySelector(s);
+    const t = q('[class*="product_title__"], [class*="adProduct_title__"], [class*="superSavingProduct_title__"], [class*="title"] a');
+    const m = q('[class*="product_mall_title__"], [class*="adProduct_mall_title__"], [class*="product_mall__"], [class*="adProduct_mall__"], [class*="mall_title"]');
+    const list = q('[class*="product_mall_list__"], [class*="mall_list"]');
+    const mimg = m ? m.querySelector('img[alt]') : null;
+    const img = q('img[src^="http"]');
+    const txt = (e.innerText || '').trim();
+    return { title: t ? t.innerText.trim() : '', mall: (m && m.innerText.trim()) || (mimg ? mimg.alt : ''),
+             mall_list: list ? list.innerText.trim() : '', text: txt.slice(0, 1500),
+             ad: /adProduct/.test(e.className) || /(^|\n)\s*광고/.test(txt),
+             img: img ? (img.currentSrc || img.src) : '' };
+  }).filter(it => it.title || it.text);
+  return { text, blocked, url: location.href, images: images.slice(0, 200), items };
 }
 
 async function start(run, kws, auto) {
