@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "HGG 네이버 순위 확인",
-  "version": "1.4.0",
-  "description": "HGG 순위 확인 프로그램과 연결해 네이버 가격비교 1페이지 순위를 확인합니다.",
+  "version": "1.5.0",
+  "description": "HGG 순위 확인 프로그램과 연결해 네이버 가격비교·쿠팡 1페이지 순위를 시크릿 창 기준으로 확인합니다.",
   "permissions": [
     "tabs",
     "scripting",
@@ -11,6 +11,7 @@
   ],
   "host_permissions": [
     "https://search.shopping.naver.com/*",
+    "https://www.coupang.com/*",
     "http://127.0.0.1:8765/*"
   ],
   "action": {

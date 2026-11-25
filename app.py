@@ -128,18 +128,18 @@ with tab1:
     with c1:
         kws = st.multiselect("확인할 키워드", cfg["keywords"], default=cfg["keywords"])
     with c2:
-        use_coupang = st.checkbox("쿠팡 (자동)", value=True)
-        use_whale = st.checkbox("네이버 가격비교 (웨일 확장)", value=True,
-                                help="웨일에 설치한 'HGG 네이버 순위 확인'이 웨일 뒤쪽 탭에서 천천히 검색해요. 웨일이 켜져 있어야 해요.")
-        use_naver = False  # 네이버 자동 크롬은 접속 제한 때문에 사용 안 함
-        st.caption("쿠팡은 크롬 창이 따로 열리고, 네이버는 웨일 뒤쪽 탭에서 확인해요. 둘 다 끝날 때까지 그 창·탭은 닫지 마세요.")
+        w_naver = st.checkbox("네이버 가격비교", value=True)
+        w_coupang = st.checkbox("쿠팡", value=True)
+        use_whale = w_naver or w_coupang
+        use_naver = use_coupang = False  # 크롬 자동 조종은 접속 차단 때문에 사용 안 함 (웨일 확장이 대신 검색)
+        st.caption("웨일 확장 'HGG 네이버 순위 확인'이 웨일 **시크릿 창**에서 네이버·쿠팡을 동시에 검색해요. 끝나면 저절로 닫혀요. 웨일이 켜져 있어야 해요.")
     st.caption(f"'상단' = 1페이지 {cfg['top_n']}위 이내 · 순위는 1페이지 안에서 몇 번째인지예요. 같은 상품을 여러 개 등록했다면 모두 표시돼요.")
 
     if st.button("▶ 순위 확인 시작", type="primary", disabled=not kws):
         run_time = E.now_str()
         prev = st.session_state.get("last") or {}
-        res = {"time": run_time, "naver": {} if use_naver else dict(prev.get("naver") or {}), "coupang": {}}
-        naver_run = E.request_naver(kws) if use_whale else None
+        res = {"time": run_time, "naver": dict(prev.get("naver") or {}), "coupang": dict(prev.get("coupang") or {})}
+        naver_run = E.request_naver(kws, [x for x, on in (("naver", w_naver), ("coupang", w_coupang)) if on]) if use_whale else None
         if use_naver or use_coupang:
             status_box = st.empty()
             try:
@@ -166,7 +166,7 @@ with tab1:
                 if time.time() - t0 > 600:
                     wait_box.warning("네이버 확인이 오래 걸려서 기다리기를 멈췄어요. 끝나면 [네이버 결과 불러오기]를 눌러 주세요.")
                     break
-                wait_box.info(f"네이버 가격비교 확인 중... 웨일 뒤쪽 탭에서 진행 ({n}/{len(kws)})")
+                wait_box.info(f"웨일 시크릿 창에서 확인 중... ({n}/{len(kws) * (int(w_naver) + int(w_coupang))})")
                 time.sleep(3)
             wait_box.empty()
             st.session_state["last"] = res
@@ -183,20 +183,21 @@ with tab1:
                                       "our_ranks": s["our_ranks"], "status": s["status"]})
         st.session_state["last"] = res
 
-    st.markdown("##### 🟢 네이버 가격비교 (웨일 확장 프로그램)")
-    st.caption("웨일 오른쪽 위 확장 아이콘 **HGG 네이버 순위 확인** → [네이버 순위 확인 시작] → 끝나면 아래 버튼. 몇 분 간격으로 계속 돌리지는 마세요.")
+    st.markdown("##### 🟢 웨일 확장 확인 기록")
+    st.caption("[순위 확인 시작]을 누르면 자동으로 돌아요. 결과가 안 보이면 아래 [결과 불러오기]. 몇 분 간격으로 계속 돌리지는 마세요.")
     run = E.latest_inbox()
     if run:
         n_done = len(run.get("results") or {})
-        st.caption(f"마지막 네이버 확인: {run['run_id'][:4]}-{run['run_id'][4:6]}-{run['run_id'][6:8]} "
-                   f"{run['run_id'][9:11]}:{run['run_id'][11:13]} · 키워드 {n_done}개 · {'완료' if run.get('done') else '진행 중'}")
+        st.caption(f"마지막 확인: {run['run_id'][:4]}-{run['run_id'][4:6]}-{run['run_id'][6:8]} "
+                   f"{run['run_id'][9:11]}:{run['run_id'][11:13]} · 네이버 {n_done}개 · 쿠팡 {len(run.get('coupang') or {})}개 · {'완료' if run.get('done') else '진행 중'}")
     if run and run.get("results") and not any((r or {}).get("incognito") for r in run["results"].values()):
         st.warning("네이버를 **시크릿 창이 아닌 일반 창**으로 검색했어요 (로그인·검색기록이 순위에 섞일 수 있어요). "
                    "웨일 주소창 `whale://extensions` → **HGG 네이버 순위 확인**의 **H 아이콘** 클릭 → "
                    "**'시크릿 모드에서 허용'**(또는 '시크릿 창에서 사용') 켜기 → 다음 확인부터 시크릿 창으로 검색해요.")
     auto = run and run.get("done") and st.session_state.get("inbox_loaded") != run["run_id"]
-    if (st.button("네이버 결과 불러오기") or auto) and run:
+    if (st.button("결과 불러오기") or auto) and run:
         parsed = E.parse_inbox(run, cfg)
+        parsed_c = E.parse_inbox_coupang(run, cfg)
         last = st.session_state.get("last") or {"time": E.now_str(), "naver": {}, "coupang": {}}
         rt = f"{run['run_id'][:4]}-{run['run_id'][4:6]}-{run['run_id'][6:8]} {run['run_id'][9:11]}:{run['run_id'][11:13]}"
         already = {h.get("run_id") for h in E.load_history() if h.get("run_id")}
@@ -209,6 +210,16 @@ with tab1:
                     E.append_history({"time": rt, "platform": "naver", "keyword": kw, "ok": True, "run_id": run["run_id"],
                                       "our_ranks": sm["our_ranks"], "status": sm["status"], "source": "웨일 확장"})
             last["naver"][kw] = r
+        for kw, r in parsed_c.items():
+            if "items" in r:
+                sm = E.summarize(r["items"], cfg)
+                r["summary"] = sm
+                r["before"] = E.previous_ranks("coupang", kw, before_time=rt)
+                if run["run_id"] not in already:
+                    E.append_history({"time": rt, "platform": "coupang", "keyword": kw, "ok": True, "run_id": run["run_id"],
+                                      "our_ranks": sm["our_ranks"], "status": sm["status"], "source": "웨일 확장"})
+            last.setdefault("coupang", {})[kw] = r
+        last["time"] = rt
         st.session_state["last"] = last
         st.session_state["inbox_loaded"] = run["run_id"]
     for kw, r in ((st.session_state.get("last") or {}).get("naver") or {}).items():

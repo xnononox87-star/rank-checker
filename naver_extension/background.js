@@ -26,7 +26,8 @@ chrome.alarms.onAlarm.addListener(async (a) => {
     const j = await (await fetch(API + "/pending")).json();
     if (j && j.run_id) {
       const url = chrome.runtime.getURL("runner.html") + "?auto=1&run=" + j.run_id +
-        "&kws=" + encodeURIComponent(JSON.stringify(j.keywords || []));
+        "&kws=" + encodeURIComponent(JSON.stringify(j.keywords || [])) +
+        "&sites=" + encodeURIComponent(JSON.stringify(j.sites || ["naver"]));
       chrome.tabs.create({ url, active: false });
     }
   } catch (e) { /* 순위 프로그램이 꺼져 있으면 아무것도 안 함 */ }

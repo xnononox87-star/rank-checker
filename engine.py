@@ -830,7 +830,11 @@ def start_receiver():
                     with open(path, encoding="utf-8") as f:
                         run = json.load(f)
                 if self.path.startswith("/result"):
-                    run["results"][data.get("keyword", "")] = {k: data.get(k) for k in ("text", "blocked", "captcha", "incognito", "url", "images", "items")}
+                    rec = {k: data.get(k) for k in ("text", "blocked", "captcha", "incognito", "url", "images", "items")}
+                    if data.get("site") == "coupang":
+                        run.setdefault("coupang", {})[data.get("keyword", "")] = rec
+                    else:
+                        run["results"][data.get("keyword", "")] = rec
                 elif self.path.startswith("/done"):
                     run["done"] = True
                 with open(path, "w", encoding="utf-8") as f:
@@ -853,11 +857,11 @@ def start_receiver():
 PENDING_PATH = os.path.join(DATA_DIR, "naver_pending.json")
 
 
-def request_naver(keywords):
-    """순위 프로그램에서 네이버 확인을 요청 -> 웨일 확장이 15초 안에 가져가서 시작"""
+def request_naver(keywords, sites=("naver",)):
+    """순위 프로그램에서 확인을 요청 -> 웨일 확장이 15초 안에 가져가서 시작"""
     run_id = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
     with open(PENDING_PATH, "w", encoding="utf-8") as f:
-        json.dump({"run_id": run_id, "keywords": list(keywords), "taken": False, "time": time.time()}, f, ensure_ascii=False)
+        json.dump({"run_id": run_id, "keywords": list(keywords), "sites": list(sites), "taken": False, "time": time.time()}, f, ensure_ascii=False)
     return run_id
 
 
@@ -872,7 +876,7 @@ def take_pending():
     job["taken"] = True
     with open(PENDING_PATH, "w", encoding="utf-8") as f:
         json.dump(job, f, ensure_ascii=False)
-    return {"run_id": job["run_id"], "keywords": job["keywords"]}
+    return {"run_id": job["run_id"], "keywords": job["keywords"], "sites": job.get("sites", ["naver"])}
 
 
 def pending_state(run_id):
@@ -886,7 +890,7 @@ def pending_state(run_id):
     if os.path.exists(path):
         with open(path, encoding="utf-8") as f:
             run = json.load(f)
-        return ("done" if run.get("done") else "running"), len(run.get("results") or {})
+        return ("done" if run.get("done") else "running"), len(run.get("results") or {}) + len(run.get("coupang") or {})
     if job.get("run_id") == run_id and job.get("taken"):
         return "running", 0
     return "waiting", 0
@@ -927,6 +931,31 @@ def _items_from_dom(raw, cfg):
             mall = "가격비교"
         out.append({"rank": i, "title": title[:80], "mall": mall, "ad": bool(it.get("ad")), "ours": ours,
                     "thumb_url": it.get("img", "") if ours else ""})
+    return out
+
+
+def parse_inbox_coupang(run, cfg, shot_dir=None):
+    """웨일 확장이 읽어 온 쿠팡 화면 -> 키워드별 순위 결과"""
+    pids = {str(p).strip() for p in cfg.get("our_coupang_product_ids", []) if str(p).strip()}
+    out = {}
+    for kw, r in (run.get("coupang") or {}).items():
+        if r.get("blocked"):
+            out[kw] = {"error": "쿠팡이 접속을 막았어요(Access Denied). 몇 시간 뒤에 다시 해 주세요."}
+            continue
+        raw = r.get("items") or []
+        if not raw:
+            out[kw] = {"error": "쿠팡 검색 결과를 읽지 못했어요."}
+            continue
+        items = []
+        for i, it in enumerate(raw[:120], 1):
+            ids = it.get("ids") or [it.get("product_id", "")]
+            ours = bool(pids & set(ids)) or _title_is_ours(it.get("name", ""), cfg)
+            items.append({"rank": i, "title": (it.get("name") or "")[:80], "price": it.get("price", ""),
+                          "product_id": it.get("product_id", ""), "ad": False, "ours": ours,
+                          "mall": coupang_stores(cfg, ids) if ours else "",
+                          "thumb_url": it.get("img", "") if ours else "",
+                          "link": f"https://www.coupang.com/vp/products/{it.get('product_id', '')}"})
+        out[kw] = {"items": items}
     return out
 
 
