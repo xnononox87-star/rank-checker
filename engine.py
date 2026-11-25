@@ -830,7 +830,7 @@ def start_receiver():
                     with open(path, encoding="utf-8") as f:
                         run = json.load(f)
                 if self.path.startswith("/result"):
-                    rec = {k: data.get(k) for k in ("text", "blocked", "captcha", "incognito", "url", "images", "items")}
+                    rec = {k: data.get(k) for k in ("text", "blocked", "captcha", "login", "incognito", "url", "images", "items")}
                     if data.get("site") == "coupang":
                         run.setdefault("coupang", {})[data.get("keyword", "")] = rec
                     else:
@@ -968,6 +968,9 @@ def parse_inbox(run, cfg):
             continue
         if r.get("captcha"):
             out[kw] = {"error": "네이버 보안 확인을 풀지 못해서 건너뛰었어요. 다시 돌려 주세요."}
+            continue
+        if r.get("login"):
+            out[kw] = {"error": "네이버가 로그인을 요구해서 읽지 못했어요. 웨일에서 네이버에 로그인한 뒤 다시 돌려 주세요."}
             continue
         items = _items_from_dom(r.get("items") or [], cfg)
         if len(items) < 5 and not r.get("items"):  # 화면 칸을 못 찾았으면 글자로 읽기

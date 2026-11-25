@@ -26,7 +26,8 @@ async function collectNaver() {
   const text = document.body.innerText || "";
   const head = text.slice(0, 3000);
   const blocked = /접속이 일시적으로 제한|비정상적인 접근/.test(head);
-  const captcha = !blocked && /보안 확인|자동입력 방지|영수증|정답을 입력|실제 사용자/.test(head);
+  const login = /nid\.naver\.com/.test(location.host) || (!!document.querySelector('input[type="password"]') && /로그인/.test(head));
+  const captcha = !blocked && !login && /보안 확인|자동입력 방지|영수증|정답을 입력|실제 사용자/.test(head);
   const leafs = [...document.querySelectorAll("a, button, span, em, div")].filter(el =>
     el.childElementCount === 0 && /^\s*(신고하기|정보\s*수정\s*요청)\s*$/.test(el.textContent || ""));
   const boxes = [];
@@ -51,7 +52,7 @@ async function collectNaver() {
     return { title, mall: catalog ? "" : (names[0] || ""), mall_list: catalog ? names.join("\n") : "",
              text: lines.join("\n").slice(0, 1500), img: im ? srcOf(im) : "" };
   }).filter(it => it.title);
-  return { text: text.slice(0, 60000), blocked, captcha, url: location.href, items };
+  return { text: text.slice(0, 60000), blocked, captcha, login, url: location.href, items };
 }
 
 // 쿠팡: 상품 칸이 가장 많이 모여 있는 목록 = 검색 결과 본문 (배너·추천 줄은 뺀다), 왼쪽 위부터 순서대로
@@ -138,8 +139,24 @@ async function runSite(site, run, kws, wantIncog) {
       }
       await waitLoaded(tab.tabId); await sleep(2500 + Math.random() * 2000);
       let data = { blocked: false, url, items: [] };
+      let readErr = "";
       try { data = (await chrome.scripting.executeScript({ target: { tabId: tab.tabId }, func: S.collect }))[0].result; }
-      catch (e) { log(`[${S.label}] '${kw}' 화면을 읽지 못했어요: ${e.message}`, "err"); }
+      catch (e) { readErr = e.message || String(e); }
+      if (readErr) {
+        let cur = "";
+        try { cur = (await chrome.tabs.get(tab.tabId)).url || ""; } catch (e) {}
+        if (/nid\.naver\.com|login/i.test(cur)) data.login = true;
+        else log(`[${S.label}] '${kw}' 화면을 읽지 못했어요: ${readErr} (${cur})`, "err");
+      }
+      if (data.login && tab.incog) {
+        // 시크릿 창에서 네이버가 로그인을 요구 -> 로그인된 일반 창(뒤쪽 탭)으로 바꿔서 같은 키워드부터 다시
+        log(`[${S.label}] 시크릿 창에서 로그인을 요구해서, 일반 창(뒤쪽 탭)으로 바꿔 검색할게요.`, "err");
+        try { await chrome.windows.remove(tab.winId); } catch (e) {}
+        tab = await openSearchTab(url, false);
+        await waitLoaded(tab.tabId); await sleep(2500 + Math.random() * 2000);
+        try { data = (await chrome.scripting.executeScript({ target: { tabId: tab.tabId }, func: S.collect }))[0].result; }
+        catch (e) { log(`[${S.label}] '${kw}' 화면을 읽지 못했어요: ${e.message}`, "err"); }
+      }
       if (data.captcha) {
         log(`[${S.label}] ⚠️ 보안 확인이 떴어요. 앞으로 띄운 창에서 직접 풀어 주세요 (3분 기다려요)`, "err");
         try { await chrome.tabs.update(tab.tabId, { active: true }); const t = await chrome.tabs.get(tab.tabId); await chrome.windows.update(t.windowId, { focused: true }); } catch (e) {}
