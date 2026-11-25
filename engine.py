@@ -228,6 +228,7 @@ _COUPANG_JS = r"""
     const box = a.closest('li') || a;
     if (seen.has(box)) continue;
     seen.add(box);
+    box.setAttribute('data-hgg-idx', String(out.length));
     const text = (box.innerText || '').trim();
     if (!text) continue;
     const nameEl = box.querySelector('.name, [class*="productName"], [class*="ProductUnit_productName"], [class*="title"]');
@@ -238,7 +239,7 @@ _COUPANG_JS = r"""
                  || /(^|\n)\s*AD\s*(\n|$)/.test(text);
     const ids = [m[1]];
     for (const k of ['itemId', 'vendorItemId']) { const mm = a.href.match(new RegExp(k + '=(\\d+)')); if (mm) ids.push(mm[1]); }
-    out.push({product_id: m[1], ids: ids, name: name, price: priceM ? priceM[1] : '', is_ad: isAd});
+    out.push({idx: out.length, product_id: m[1], ids: ids, name: name, price: priceM ? priceM[1] : '', is_ad: isAd});
   }
   return out;
 }
@@ -277,14 +278,15 @@ _NAVER_JS = r"""
   const sel = '[class*="product_item__"], [class*="adProduct_item__"], [class*="superSavingProduct_item__"]';
   let els = [...document.querySelectorAll(sel)];
   els = els.filter(e => !els.some(o => o !== e && o.contains(e)));
-  return els.map(e => {
+  return els.map((e, idx) => {
+    e.setAttribute('data-hgg-idx', String(idx));
     const t = e.querySelector('[class*="product_title__"], [class*="adProduct_title__"], [class*="superSavingProduct_title__"]');
     const m = e.querySelector('[class*="product_mall_title__"], [class*="adProduct_mall_title__"], [class*="product_mall__"], [class*="adProduct_mall__"], [class*="superSavingProduct_mall"]');
     const list = e.querySelector('[class*="product_mall_list__"], [class*="mall_list"]');
     const img = m ? m.querySelector('img[alt]') : null;
     let mall = m ? (m.innerText || '').trim() : '';
     if (!mall && img) mall = img.alt;
-    return {title: t ? t.innerText.trim() : '', mall: mall, mall_list: list ? list.innerText.trim() : '',
+    return {idx: idx, title: t ? t.innerText.trim() : '', mall: mall, mall_list: list ? list.innerText.trim() : '',
             text: (e.innerText || '').trim(),
             ad: /adProduct/.test(e.className) || /(^|\n)\s*광고/.test(e.innerText || '')};
   });
@@ -304,7 +306,40 @@ def _store_of(text, mall, cfg):
     return (mall or "").splitlines()[0].strip() if mall else ""
 
 
-def _naver_one(page, kw, cfg, progress):
+def _shoot(page, idx, path):
+    """우리 상품 칸만 잘라서 캡처"""
+    try:
+        loc = page.locator(f'[data-hgg-idx="{idx}"]').first
+        loc.scroll_into_view_if_needed(timeout=5000)
+        page.wait_for_timeout(500)
+        loc.screenshot(path=path, timeout=10000)
+        return path
+    except Exception:
+        return ""
+
+
+def _debug(page, shot_dir, name):
+    """읽기에 실패했을 때 그 순간 화면과 주소를 남긴다."""
+    if not shot_dir:
+        return {}
+    out = {"url": ""}
+    try:
+        out["url"] = page.url
+        path = os.path.join(shot_dir, f"debug_{name}.png")
+        page.screenshot(path=path, full_page=False)
+        out["shot"] = path
+        with open(os.path.join(shot_dir, f"debug_{name}.txt"), "w", encoding="utf-8") as f:
+            f.write(page.url + "\n\n" + (page.inner_text("body") or "")[:20000])
+    except Exception:
+        pass
+    return out
+
+
+def _safe(s):
+    return re.sub(r"[^0-9A-Za-z가-힣]+", "_", s)[:30]
+
+
+def _naver_one(page, kw, cfg, progress, shot_dir=None):
     size = int(cfg.get("naver_page_size", 40))
     url = f"https://search.shopping.naver.com/search/all?query={quote(kw)}&pagingIndex=1&pagingSize={size}&sort=rel"
     page.goto(url, wait_until="domcontentloaded", timeout=45000)
@@ -322,16 +357,18 @@ def _naver_one(page, kw, cfg, progress):
         mall = it["mall"].splitlines()[0].strip() if it["mall"] else ("가격비교" if it["mall_list"] else "")
         if ours:
             mall = _store_of(it["mall_list"] + "\n" + it["text"], it["mall"], cfg) or mall
+        shot = _shoot(page, it.get("idx"), os.path.join(shot_dir, f"naver_{_safe(kw)}_{i}.png")) if (ours and shot_dir) else ""
         items.append({"rank": i, "title": (it["title"] or it["text"].splitlines()[0])[:80], "mall": mall,
-                      "ad": bool(it["ad"]), "ours": ours})
+                      "ad": bool(it["ad"]), "ours": ours, "shot": shot})
     if not items:  # 화면 구조가 바뀌었으면 텍스트로 읽기
         items = parse_naver_text(page.inner_text("body"), cfg)[:size]
     if not items:
-        return {"error": "네이버 쇼핑 결과를 읽지 못했어요(보안문자·화면 구조 변경 가능). 붙여넣기로 확인해 주세요."}
+        return {"error": "네이버 쇼핑 결과를 읽지 못했어요. 아래 '그때 화면'을 캡처해서 Claude에게 보내주세요.",
+                "debug": _debug(page, shot_dir, f"naver_{_safe(kw)}")}
     return {"items": items}
 
 
-def _coupang_one(page, kw, cfg, progress):
+def _coupang_one(page, kw, cfg, progress, shot_dir=None):
     size = int(cfg.get("coupang_page_size", 36))
     pids = {str(p).strip() for p in cfg.get("our_coupang_product_ids", []) if str(p).strip()}
     url = f"https://www.coupang.com/np/search?q={quote(kw)}&page=1&listSize={size}"
@@ -341,20 +378,22 @@ def _coupang_one(page, kw, cfg, progress):
     _scroll(page, 8)
     raw = page.evaluate(_COUPANG_JS)
     if not raw:
+        dbg = _debug(page, shot_dir, f"coupang_{_safe(kw)}")
         body = (page.inner_text("body") or "")[:2000]
         blocked = any(w in body for w in ["Access Denied", "접근이 차단", "비정상적인"]) or "denied" in page.title().lower()
         return {"error": "쿠팡이 자동 검색을 차단했어요. 붙여넣기로 확인해 주세요." if blocked
-                else "검색 결과를 읽지 못했어요(화면 구조 변경 가능). 붙여넣기로 확인해 주세요."}
+                else "쿠팡 검색 결과를 읽지 못했어요. 아래 '그때 화면'을 캡처해서 Claude에게 보내주세요.", "debug": dbg}
     items, organic = [], 0
     for i, it in enumerate(raw[:size], 1):
         if not it["is_ad"]:
             organic += 1
         ours = bool(pids & set(it.get("ids") or [it["product_id"]])) or _title_is_ours(it["name"], cfg)
         stores = coupang_stores(cfg, it.get("ids") or [it["product_id"]]) if ours else ""
+        shot = _shoot(page, it.get("idx"), os.path.join(shot_dir, f"coupang_{_safe(kw)}_{i}.png")) if (ours and shot_dir) else ""
         items.append({"rank": i, "organic_rank": None if it["is_ad"] else organic,
                       "title": it["name"], "price": it["price"], "ad": it["is_ad"], "mall": stores,
                       "product_id": it["product_id"],
-                      "link": f"https://www.coupang.com/vp/products/{it['product_id']}", "ours": ours})
+                      "link": f"https://www.coupang.com/vp/products/{it['product_id']}", "ours": ours, "shot": shot})
     return {"items": items}
 
 
@@ -364,6 +403,15 @@ def browser_search_many(keywords, cfg, do_naver=True, do_coupang=True, progress=
 
     profile = os.path.join(DATA_DIR, "browser_profile")
     results = {"naver": {}, "coupang": {}}
+    shots_root = os.path.join(DATA_DIR, "shots")
+    shot_dir = os.path.join(shots_root, dt.datetime.now().strftime("%Y%m%d_%H%M%S"))
+    os.makedirs(shot_dir, exist_ok=True)
+    try:  # 캡처는 최근 15회분만 보관
+        import shutil
+        for old in sorted(os.listdir(shots_root))[:-15]:
+            shutil.rmtree(os.path.join(shots_root, old), ignore_errors=True)
+    except Exception:
+        pass
     jobs = [("naver", kw) for kw in keywords if do_naver] + [("coupang", kw) for kw in keywords if do_coupang]
     with sync_playwright() as p:
         ctx = p.chromium.launch_persistent_context(
@@ -387,9 +435,20 @@ def browser_search_many(keywords, cfg, do_naver=True, do_coupang=True, progress=
                         pass
                     last_site = site
                 fn = _naver_one if site == "naver" else _coupang_one
-                results[site][kw] = fn(page, kw, cfg, progress)
+                results[site][kw] = fn(page, kw, cfg, progress, shot_dir)
             except Exception as e:  # noqa
-                results[site][kw] = {"error": f"오류: {e}"}
+                msg = str(e)
+                if "has been closed" in msg:
+                    try:
+                        page = ctx.new_page()
+                        last_site = None
+                        results[site][kw] = {"error": "크롬 창이 닫혀서 이 키워드는 건너뛰었어요. 확인 중에는 크롬 창을 닫지 마세요."}
+                    except Exception:
+                        for s2, k2 in jobs[n:]:
+                            results[s2].setdefault(k2, {"error": "크롬 창이 닫혀서 확인을 멈췄어요. 확인 중에는 크롬 창을 닫지 마세요."})
+                        break
+                else:
+                    results[site][kw] = {"error": f"오류: {msg[:150]}"}
             if n < len(jobs) - 1:
                 time.sleep(random.uniform(6, 12))
         ctx.close()

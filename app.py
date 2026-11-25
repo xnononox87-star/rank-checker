@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import datetime as dt
+import os
 
 import pandas as pd
 import streamlit as st
@@ -143,6 +144,21 @@ with tab1:
         rows_html.append("<div style='color:#888;font-size:0.8rem;margin-top:6px'>쿠팡은 검색 화면에 판매자가 안 나와서, 그 노출상품을 등록한 우리 계정 이름으로 표시해요. 여러 계정이 같은 노출상품을 쓰면 실제로는 그중 아이템위너 한 곳이 노출돼요.</div>")
         st.markdown("".join(rows_html), unsafe_allow_html=True)
         st.write("")
+        shots = []
+        for kw in kws if kws else cfg["keywords"]:
+            for plat, label in (("naver", "네이버"), ("coupang", "쿠팡")):
+                r = res[plat].get(kw) or {}
+                for it in r.get("items", []):
+                    if it.get("ours") and it.get("shot") and os.path.exists(it["shot"]):
+                        tag = "(광고) " if it.get("ad") else ""
+                        shots.append((it["shot"], f"{kw} · {label} {it['rank']}위 {tag}{it.get('mall', '')}"))
+        if shots:
+            st.markdown("**📸 지금 노출되고 있는 우리 상품**")
+            for i in range(0, len(shots), 3):
+                cols = st.columns(3)
+                for col, (path, cap) in zip(cols, shots[i:i + 3]):
+                    col.image(path, caption=cap, width="stretch")
+            st.write("")
         st.markdown("**키워드별 자세히 보기** (우리 상품은 ⭐)")
         for kw in kws if kws else cfg["keywords"]:
             with st.expander(kw):
@@ -156,12 +172,19 @@ with tab1:
                             continue
                         if "error" in r:
                             st.warning(r["error"])
+                            d = r.get("debug") or {}
+                            if d.get("shot") and os.path.exists(d["shot"]):
+                                st.caption(f"그때 화면 · {d.get('url', '')}")
+                                st.image(d["shot"], width="stretch")
                             continue
                         df = pd.DataFrame(r["items"])
                         df["우리"] = df["ours"].map(lambda x: "⭐" if x else "")
                         df["광고"] = df["ad"].map(lambda x: "광고" if x else "")
                         show = ["rank", "우리", "광고", "mall", "title", "price"]
                         df = df[[c for c in show if c in df.columns]].rename(columns={"rank": "순위", "title": "상품명", "price": "가격", "mall": "상점", "category": "카테고리"})
+                        for it in r["items"]:
+                            if it.get("ours") and it.get("shot") and os.path.exists(it["shot"]):
+                                st.image(it["shot"], caption=f"{it['rank']}위 {it.get('mall', '')}", width="stretch")
                         only = st.toggle("우리 상품만", key=f"only_{plat}_{kw}")
                         if only:
                             df = df[df["우리"] == "⭐"]
