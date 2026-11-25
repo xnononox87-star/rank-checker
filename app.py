@@ -24,6 +24,14 @@ st.markdown(
 )
 
 cfg = E.load_config()
+
+
+@st.cache_resource
+def _receiver():
+    return E.start_receiver()
+
+
+_receiver()
 STATUS_BADGE = {"상단": ("b-top", "상단"), "1페이지": ("b-p1", "1페이지 하단"),
                 "없음": ("b-none", "1페이지 없음"), "확인불가": ("b-err", "확인 불가")}
 
@@ -57,7 +65,7 @@ def rank_cards(ranks, items):
     out = []
     for r in ranks:
         it = next((x for x in items if x["rank"] == r), {}) or {}
-        uri = thumb_uri(it.get("shot"))
+        uri = thumb_uri(it.get("shot")) or it.get("thumb_url", "")
         img = (f"<img src='{uri}' style='width:86px;height:86px;object-fit:cover;object-position:top;"
                f"border-radius:6px;border:1px solid #ddd;display:block;margin:0 auto 3px'>") if uri else \
               "<div style='width:86px;height:86px;border-radius:6px;background:#f1f1f1;margin:0 auto 3px;" \
@@ -154,7 +162,36 @@ with tab1:
                                       "our_ranks": s["our_ranks"], "status": s["status"]})
         st.session_state["last"] = res
 
-    with st.expander("📋 네이버 쇼핑 붙여넣기 (네이버는 이렇게 확인해요)", expanded=False):
+    st.markdown("##### 🟢 네이버 가격비교 (웨일 확장 프로그램)")
+    st.caption("웨일 오른쪽 위 확장 아이콘 **HGG 네이버 순위 확인** → [네이버 순위 확인 시작] → 끝나면 아래 버튼. 하루 1~2번만 돌려 주세요.")
+    run = E.latest_inbox()
+    if run:
+        n_done = len(run.get("results") or {})
+        st.caption(f"마지막 네이버 확인: {run['run_id'][:4]}-{run['run_id'][4:6]}-{run['run_id'][6:8]} "
+                   f"{run['run_id'][9:11]}:{run['run_id'][11:13]} · 키워드 {n_done}개 · {'완료' if run.get('done') else '진행 중'}")
+    auto = run and run.get("done") and st.session_state.get("inbox_loaded") != run["run_id"]
+    if (st.button("네이버 결과 불러오기") or auto) and run:
+        parsed = E.parse_inbox(run, cfg)
+        last = st.session_state.get("last") or {"time": E.now_str(), "naver": {}, "coupang": {}}
+        rt = f"{run['run_id'][:4]}-{run['run_id'][4:6]}-{run['run_id'][6:8]} {run['run_id'][9:11]}:{run['run_id'][11:13]}"
+        already = {h.get("run_id") for h in E.load_history() if h.get("run_id")}
+        for kw, r in parsed.items():
+            if "items" in r:
+                sm = E.summarize(r["items"], cfg)
+                r["summary"] = sm
+                r["before"] = E.previous_ranks("naver", kw, before_time=rt)
+                if run["run_id"] not in already:
+                    E.append_history({"time": rt, "platform": "naver", "keyword": kw, "ok": True, "run_id": run["run_id"],
+                                      "our_ranks": sm["our_ranks"], "status": sm["status"], "source": "웨일 확장"})
+            last["naver"][kw] = r
+        st.session_state["last"] = last
+        st.session_state["inbox_loaded"] = run["run_id"]
+    for kw, r in ((st.session_state.get("last") or {}).get("naver") or {}).items():
+        if r.get("raw") and os.path.exists(r["raw"]):
+            with open(r["raw"], "rb") as f:
+                st.download_button(f"'{kw}' 원문 받기 (Claude에게 보내기)", f.read(), file_name=os.path.basename(r["raw"]), key=f"raw_{kw}")
+
+    with st.expander("📋 네이버 직접 붙여넣기 (확장 프로그램이 안 될 때)", expanded=False):
         st.markdown("1) 키워드 버튼을 눌러 평소 브라우저에서 네이버 쇼핑을 열고 → 2) 화면에서 **Ctrl+A → Ctrl+C** → "
                     "3) 그 키워드 칸에 **Ctrl+V** → 4) 맨 아래 **[네이버 결과 반영]**")
         pasted = {}

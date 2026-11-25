@@ -739,5 +739,111 @@ def ocr_image(data):
         return "", f"캡처 글자 읽기에 실패했어요({e}). 텍스트 복사·붙여넣기를 이용해 주세요."
 
 
+# ---------------------------------------------------------------- 웨일 확장 프로그램 연결 (네이버)
+INBOX_DIR = os.path.join(DATA_DIR, "naver_inbox")
+RECEIVER_PORT = 8765
+
+
+def start_receiver():
+    """웨일 확장 프로그램이 보낸 네이버 검색 화면을 받는 작은 내부 서버 (이 컴퓨터 안에서만 접속 가능)"""
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    os.makedirs(INBOX_DIR, exist_ok=True)
+
+    class H(BaseHTTPRequestHandler):
+        def _send(self, code, obj=None):
+            body = json.dumps(obj or {}, ensure_ascii=False).encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_OPTIONS(self):
+            self._send(204)
+
+        def do_GET(self):
+            if self.path.startswith("/keywords"):
+                run_id = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+                self._send(200, {"run_id": run_id, "keywords": load_config().get("keywords", [])})
+            else:
+                self._send(200, {"ok": True})
+
+        def do_POST(self):
+            try:
+                n = int(self.headers.get("Content-Length", "0"))
+                data = json.loads(self.rfile.read(n).decode("utf-8") or "{}")
+                run_id = re.sub(r"[^0-9_]", "", str(data.get("run_id", ""))) or "unknown"
+                path = os.path.join(INBOX_DIR, f"{run_id}.json")
+                run = {"run_id": run_id, "done": False, "results": {}}
+                if os.path.exists(path):
+                    with open(path, encoding="utf-8") as f:
+                        run = json.load(f)
+                if self.path.startswith("/result"):
+                    run["results"][data.get("keyword", "")] = {k: data.get(k) for k in ("text", "blocked", "url", "images")}
+                elif self.path.startswith("/done"):
+                    run["done"] = True
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump(run, f, ensure_ascii=False)
+                self._send(200, {"ok": True})
+            except Exception as e:
+                self._send(500, {"error": str(e)})
+
+        def log_message(self, *a):
+            pass
+
+    try:
+        srv = ThreadingHTTPServer(("127.0.0.1", RECEIVER_PORT), H)
+    except OSError:
+        return None  # 이미 켜져 있음
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
+def latest_inbox():
+    try:
+        files = sorted(f for f in os.listdir(INBOX_DIR) if f.endswith(".json"))
+    except FileNotFoundError:
+        return None
+    if not files:
+        return None
+    with open(os.path.join(INBOX_DIR, files[-1]), encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _match_image(title, images):
+    key = _norm(title)[:14]
+    if not key:
+        return ""
+    for im in images or []:
+        if key in _norm(im.get("alt", "")) or key in _norm(im.get("text", "")):
+            return im.get("src", "")
+    return ""
+
+
+def parse_inbox(run, cfg):
+    """확장 프로그램이 보낸 화면 -> 키워드별 순위 결과"""
+    out = {}
+    for kw, r in (run.get("results") or {}).items():
+        if r.get("blocked"):
+            out[kw] = {"error": "네이버가 접속을 제한했어요. 몇 시간 뒤에 다시 해 주세요."}
+            continue
+        items = parse_naver_text(r.get("text") or "", cfg)
+        if not items:
+            raw = os.path.join(INBOX_DIR, f"raw_{run.get('run_id')}_{_safe(kw)}.txt")
+            with open(raw, "w", encoding="utf-8") as f:
+                f.write((r.get("url") or "") + "\n\n" + (r.get("text") or ""))
+            out[kw] = {"error": "네이버 화면을 읽지 못했어요. 아래 '원문 받기'로 파일을 받아 Claude에게 보내주세요.", "raw": raw}
+            continue
+        for it in items:
+            if it.get("ours"):
+                it["thumb_url"] = _match_image(it["title"], r.get("images"))
+        out[kw] = {"items": items}
+    return out
+
+
 def now_str():
     return dt.datetime.now().strftime("%Y-%m-%d %H:%M")
