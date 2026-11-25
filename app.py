@@ -33,6 +33,42 @@ def badge(status):
     return f'<span class="badge {cls}">{label}</span>'
 
 
+def thumb_uri(path):
+    """캡처 파일 -> 작은 썸네일(base64). 한 번 만들면 .thumb.jpg 로 저장해 재사용."""
+    import base64
+    if not path or not os.path.exists(path):
+        return ""
+    tp = path + ".thumb.jpg"
+    try:
+        if not os.path.exists(tp):
+            from PIL import Image
+            im = Image.open(path).convert("RGB")
+            w = 180
+            im = im.resize((w, max(1, int(im.height * w / im.width))))
+            im.save(tp, "JPEG", quality=80)
+        with open(tp, "rb") as f:
+            return "data:image/jpeg;base64," + base64.b64encode(f.read()).decode()
+    except Exception:
+        return ""
+
+
+def rank_cards(ranks, items):
+    """'3위 직구유통' + 썸네일 카드 여러 개"""
+    out = []
+    for r in ranks:
+        it = next((x for x in items if x["rank"] == r), {}) or {}
+        uri = thumb_uri(it.get("shot"))
+        img = (f"<img src='{uri}' style='width:86px;height:86px;object-fit:cover;object-position:top;"
+               f"border-radius:6px;border:1px solid #ddd;display:block;margin:0 auto 3px'>") if uri else \
+              "<div style='width:86px;height:86px;border-radius:6px;background:#f1f1f1;margin:0 auto 3px;" \
+              "display:flex;align-items:center;justify-content:center;color:#aaa;font-size:0.7rem'>사진 없음</div>"
+        ad = "<span style='color:#c2410c'>(광고)</span>" if it.get("ad") else ""
+        out.append(f"<div title='{(it.get('title') or '').replace(chr(39), '')}' style='display:inline-block;width:96px;margin:4px 4px 2px 0;"
+                   f"vertical-align:top;text-align:center;font-size:0.78rem;line-height:1.25'>{img}"
+                   f"<b>{r}위</b>{ad}<br><span style='color:#555'>{it.get('mall', '')}</span></div>")
+    return "".join(out)
+
+
 def ranks_text(ranks, items=None):
     if not ranks:
         return "-"
@@ -168,10 +204,10 @@ with tab1:
                     cells.append(badge("확인불가") + f"<br><span style='color:#999;font-size:0.8rem'>{r['error'][:60]}</span>")
                 else:
                     s = r["summary"]
-                    cells.append(f"{badge(s['status'])} <b>{ranks_text(s['our_ranks'], r['items'])}</b>"
-                                 f"<br><span style='color:#666;font-size:0.82rem'>{change_text(s['our_ranks'], r.get('before'))}</span>")
-            rows_html.append(f"<tr style='border-top:1px solid #e5e7eb'><td style='padding:10px 8px'><b>{kw}</b></td>"
-                             f"<td>{cells[0]}</td><td>{cells[1]}</td></tr>")
+                    cells.append(f"{badge(s['status'])} <span style='color:#666;font-size:0.82rem'>{change_text(s['our_ranks'], r.get('before'))}</span>"
+                                 f"<br>{rank_cards(s['our_ranks'], r['items']) if s['our_ranks'] else '-'}")
+            rows_html.append(f"<tr style='border-top:1px solid #e5e7eb'><td style='padding:10px 8px;vertical-align:top;white-space:nowrap'><b>{kw}</b></td>"
+                             f"<td style='padding:8px;vertical-align:top'>{cells[0]}</td><td style='padding:8px;vertical-align:top'>{cells[1]}</td></tr>")
         rows_html.append("</table>")
         rows_html.append("<div style='color:#888;font-size:0.8rem;margin-top:6px'>쿠팡은 검색 화면에 판매자가 안 나와서, 그 노출상품을 등록한 우리 계정 이름으로 표시해요. 여러 계정이 같은 노출상품을 쓰면 실제로는 그중 아이템위너 한 곳이 노출돼요.</div>")
         st.markdown("".join(rows_html), unsafe_allow_html=True)
@@ -185,11 +221,11 @@ with tab1:
                         tag = "(광고) " if it.get("ad") else ""
                         shots.append((it["shot"], f"{kw} · {label} {it['rank']}위 {tag}{it.get('mall', '')}"))
         if shots:
-            st.markdown("**📸 지금 노출되고 있는 우리 상품**")
-            for i in range(0, len(shots), 3):
-                cols = st.columns(3)
-                for col, (path, cap) in zip(cols, shots[i:i + 3]):
-                    col.image(path, caption=cap, width="stretch")
+            with st.expander("📸 우리 상품 캡처 크게 보기"):
+                for i in range(0, len(shots), 4):
+                    cols = st.columns(4)
+                    for col, (path, cap) in zip(cols, shots[i:i + 4]):
+                        col.image(path, caption=cap, width="stretch")
             st.write("")
         st.markdown("**키워드별 자세히 보기** (우리 상품은 ⭐)")
         for kw in kws if kws else cfg["keywords"]:
