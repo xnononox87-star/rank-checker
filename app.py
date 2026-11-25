@@ -190,6 +190,10 @@ with tab1:
         n_done = len(run.get("results") or {})
         st.caption(f"마지막 네이버 확인: {run['run_id'][:4]}-{run['run_id'][4:6]}-{run['run_id'][6:8]} "
                    f"{run['run_id'][9:11]}:{run['run_id'][11:13]} · 키워드 {n_done}개 · {'완료' if run.get('done') else '진행 중'}")
+    if run and run.get("results") and not any((r or {}).get("incognito") for r in run["results"].values()):
+        st.warning("네이버를 **시크릿 창이 아닌 일반 창**으로 검색했어요 (로그인·검색기록이 순위에 섞일 수 있어요). "
+                   "웨일 주소창 `whale://extensions` → **HGG 네이버 순위 확인**의 **H 아이콘** 클릭 → "
+                   "**'시크릿 모드에서 허용'**(또는 '시크릿 창에서 사용') 켜기 → 다음 확인부터 시크릿 창으로 검색해요.")
     auto = run and run.get("done") and st.session_state.get("inbox_loaded") != run["run_id"]
     if (st.button("네이버 결과 불러오기") or auto) and run:
         parsed = E.parse_inbox(run, cfg)
@@ -316,9 +320,9 @@ with tab1:
                             df = df[df["우리"] == "⭐"]
                         st.dataframe(df, hide_index=True, width="stretch", height=min(38 * (len(df) + 1) + 3, 420))
                         if plat == "naver":
-                            st.caption("네이버 순위는 광고 자리를 포함한 화면 순서예요.")
+                            st.caption("네이버 순위는 시크릿 창에서 검색했을 때 화면 맨 위부터 센 순서예요.")
                         else:
-                            st.caption("쿠팡 순위는 광고 자리를 포함한 화면 순서예요.")
+                            st.caption("쿠팡 순위는 시크릿 창에서 검색했을 때 검색 결과 목록 맨 위 왼쪽부터 센 순서예요.")
 
     with st.expander("📅 지난 기록"):
         hist = E.load_history()

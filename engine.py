@@ -218,19 +218,40 @@ def naver_shop_search(keyword, cfg):
 # ---------------------------------------------------------------- 쿠팡
 _COUPANG_JS = r"""
 () => {
-  const root = document.querySelector('#product-list, #productList, ul.search-product-list, [class*="search-product-list"]') || document;
-  const anchors = [...root.querySelectorAll('a[href*="/vp/products/"]')];
-  const seen = new Set();
-  const out = [];
-  for (const a of anchors) {
-    const m = a.href.match(/\/vp\/products\/(\d+)/);
-    if (!m) continue;
-    const box = a.closest('li') || a;
-    if (seen.has(box)) continue;
-    seen.add(box);
-    box.setAttribute('data-hgg-idx', String(out.length));
+  // 1) 상품 링크가 있는 칸(li)을 모두 찾고  2) 그중 같은 부모 밑에 가장 많이 모여 있는 목록 = 검색 결과 본문
+  //    (위쪽 배너·추천 캐러셀·아래 '같이 보면 좋은 상품'은 칸 수가 적어서 빠진다)
+  const cards = new Map();
+  for (const a of document.querySelectorAll('a[href*="/vp/products/"]')) {
+    const card = a.closest('li') || a.parentElement;
+    if (!card || cards.has(card)) continue;
+    const r = card.getBoundingClientRect();
+    if (r.width < 50 || r.height < 50) continue;
+    cards.set(card, a);
+  }
+  const groups = new Map();
+  for (const c of cards.keys()) {
+    const p = c.parentElement;
+    if (!groups.has(p)) groups.set(p, []);
+    groups.get(p).push(c);
+  }
+  let mainParent = null, max = 0;
+  for (const [p, g] of groups) if (g.length > max) { max = g.length; mainParent = p; }
+  if (!mainParent) return [];
+  // 목록이 여러 줄(ul)로 나뉜 화면이면, 같은 모양의 형제 목록도 합친다
+  let lists = [mainParent];
+  const gp = mainParent.parentElement;
+  if (gp) {
+    const sibs = [...gp.children].filter(el => el !== mainParent && el.tagName === mainParent.tagName &&
+      el.className === mainParent.className && groups.has(el) && groups.get(el).length >= 2);
+    if (sibs.length) lists = [...gp.children].filter(el => el === mainParent || sibs.includes(el));
+  }
+  const main = [];
+  for (const l of lists) for (const c of l.children) if (cards.has(c)) main.push(c);
+  return main.map((box, idx) => {
+    box.setAttribute('data-hgg-idx', String(idx));
+    const a = cards.get(box);
+    const m = a.href.match(/\/vp\/products\/(\d+)/) || [null, ''];
     const text = (box.innerText || '').trim();
-    if (!text) continue;
     const nameEl = box.querySelector('.name, [class*="productName"], [class*="ProductUnit_productName"], [class*="title"]');
     let name = nameEl ? nameEl.innerText.trim() : '';
     if (!name) name = (text.split('\n').find(t => t.trim().length > 8) || '').trim();
@@ -239,9 +260,8 @@ _COUPANG_JS = r"""
                  || /(^|\n)\s*AD\s*(\n|$)/.test(text);
     const ids = [m[1]];
     for (const k of ['itemId', 'vendorItemId']) { const mm = a.href.match(new RegExp(k + '=(\\d+)')); if (mm) ids.push(mm[1]); }
-    out.push({idx: out.length, product_id: m[1], ids: ids, name: name, price: priceM ? priceM[1] : '', is_ad: isAd});
-  }
-  return out;
+    return {idx: idx, product_id: m[1], ids: ids, name: name, price: priceM ? priceM[1] : '', is_ad: isAd};
+  });
 }
 """
 
@@ -268,9 +288,20 @@ def _wait_if_captcha(page, progress, label):
 
 
 def _scroll(page, times=8):
-    for _ in range(times):
+    """맨 아래까지 천천히 내려서 상품 사진·목록을 다 불러온 뒤 맨 위로"""
+    for _ in range(max(times, 25)):
         page.mouse.wheel(0, random.randint(1100, 1600))
         page.wait_for_timeout(random.randint(400, 800))
+        try:
+            if page.evaluate("window.innerHeight + window.scrollY >= document.body.scrollHeight - 50"):
+                break
+        except Exception:
+            pass
+    try:
+        page.evaluate("window.scrollTo(0, 0)")
+        page.wait_for_timeout(500)
+    except Exception:
+        pass
 
 
 _NAVER_JS = r"""
@@ -371,7 +402,7 @@ def _naver_one(page, kw, cfg, progress, shot_dir=None):
 def _coupang_one(page, kw, cfg, progress, shot_dir=None):
     size = int(cfg.get("coupang_page_size", 36))
     pids = {str(p).strip() for p in cfg.get("our_coupang_product_ids", []) if str(p).strip()}
-    url = f"https://www.coupang.com/np/search?q={quote(kw)}&page=1&listSize={size}"
+    url = f"https://www.coupang.com/np/search?component=&q={quote(kw)}&channel=user"
     page.goto(url, wait_until="domcontentloaded", timeout=45000)
     page.wait_for_timeout(random.randint(3000, 5000))
     _wait_if_captcha(page, progress, f"쿠팡 '{kw}'")
@@ -384,7 +415,7 @@ def _coupang_one(page, kw, cfg, progress, shot_dir=None):
         return {"error": "쿠팡이 자동 검색을 차단했어요. 붙여넣기로 확인해 주세요." if blocked
                 else "쿠팡 검색 결과를 읽지 못했어요. 아래 '그때 화면'을 캡처해서 Claude에게 보내주세요.", "debug": dbg}
     items, organic = [], 0
-    for i, it in enumerate(raw[:size], 1):
+    for i, it in enumerate(raw[:120], 1):  # 1페이지에 보이는 상품 전부
         if not it["is_ad"]:
             organic += 1
         ours = bool(pids & set(it.get("ids") or [it["product_id"]])) or _title_is_ours(it["name"], cfg)
@@ -414,12 +445,11 @@ def browser_search_many(keywords, cfg, do_naver=True, do_coupang=True, progress=
         pass
     jobs = [("naver", kw) for kw in keywords if do_naver] + [("coupang", kw) for kw in keywords if do_coupang]
     with sync_playwright() as p:
-        ctx = p.chromium.launch_persistent_context(
-            profile, channel="chrome", headless=False, locale="ko-KR", chromium_sandbox=True,
-            viewport={"width": 1300, "height": 900},
-            args=["--disable-blink-features=AutomationControlled"],
-        )
-        page = ctx.pages[0] if ctx.pages else ctx.new_page()
+        # 시크릿 창과 같은 조건: 매번 기록·쿠키 없는 새 창으로 검색
+        browser = p.chromium.launch(channel="chrome", headless=False, chromium_sandbox=True,
+                                    args=["--disable-blink-features=AutomationControlled", "--incognito"])
+        ctx = browser.new_context(locale="ko-KR", viewport={"width": 1300, "height": 900})
+        page = ctx.new_page()
         last_site = None
         for n, (site, kw) in enumerate(jobs):
             label = "네이버" if site == "naver" else "쿠팡"
@@ -452,6 +482,7 @@ def browser_search_many(keywords, cfg, do_naver=True, do_coupang=True, progress=
             if n < len(jobs) - 1:
                 time.sleep(random.uniform(6, 12))
         ctx.close()
+        browser.close()
     return results
 
 
@@ -799,7 +830,7 @@ def start_receiver():
                     with open(path, encoding="utf-8") as f:
                         run = json.load(f)
                 if self.path.startswith("/result"):
-                    run["results"][data.get("keyword", "")] = {k: data.get(k) for k in ("text", "blocked", "captcha", "url", "images", "items")}
+                    run["results"][data.get("keyword", "")] = {k: data.get(k) for k in ("text", "blocked", "captcha", "incognito", "url", "images", "items")}
                 elif self.path.startswith("/done"):
                     run["done"] = True
                 with open(path, "w", encoding="utf-8") as f:
@@ -910,7 +941,7 @@ def parse_inbox(run, cfg):
             out[kw] = {"error": "네이버 보안 확인을 풀지 못해서 건너뛰었어요. 다시 돌려 주세요."}
             continue
         items = _items_from_dom(r.get("items") or [], cfg)
-        if len(items) < 5:  # 화면 칸을 못 찾았으면 글자로 읽기
+        if len(items) < 5 and not r.get("items"):  # 화면 칸을 못 찾았으면 글자로 읽기
             items = parse_naver_text(r.get("text") or "", cfg)
         if not items:
             raw = os.path.join(INBOX_DIR, f"raw_{run.get('run_id')}_{_safe(kw)}.txt")
@@ -919,7 +950,7 @@ def parse_inbox(run, cfg):
             out[kw] = {"error": "네이버 화면을 읽지 못했어요. 아래 '원문 받기'로 파일을 받아 Claude에게 보내주세요.", "raw": raw}
             continue
         for it in items:
-            if it.get("ours"):
+            if it.get("ours") and not it.get("thumb_url"):
                 it["thumb_url"] = _match_image(it["title"], r.get("images"))
         out[kw] = {"items": items}
     return out

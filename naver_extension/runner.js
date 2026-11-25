@@ -36,39 +36,56 @@ async function collect() {
     }
     images.push({ src, text: (t || fallback).slice(0, 400), alt: img.alt || "" });
   }
-  // 상품 칸 단위로 읽기 (가격비교 화면): 칸 안에 오른쪽 판매처 칸까지 같이 들어 있어 순위가 밀리지 않는다
-  const sels = ['[class*="product_item__"], [class*="adProduct_item__"], [class*="superSavingProduct_item__"]',
-                '[class*="basicList_item"]', 'li[class*="product_list_item"], div[class*="product_list_item"]'];
-  let best = [];
-  for (const sel of sels) {
-    let els = [...document.querySelectorAll(sel)];
-    els = els.filter(e => !els.some(o => o !== e && o.contains(e)));
-    if (els.length > best.length) best = els;
+  // 상품 칸 단위로 읽기 (가격비교 화면)
+  // 상품마다 꼭 한 번 나오는 '신고하기'(일반 상품) / '정보 수정요청'(가격비교 묶음)을 기준으로,
+  // 그 글자 하나만 품고 있는 가장 큰 상자 = 상품 한 칸 (왼쪽 상품정보 + 오른쪽 판매처가 같이 들어 있음)
+  const leafs = [...document.querySelectorAll("a, button, span, em, div")].filter(el =>
+    el.childElementCount === 0 && /^\s*(신고하기|정보\s*수정\s*요청)\s*$/.test(el.textContent || ""));
+  const boxes = [];
+  for (const mk of leafs) {
+    let box = mk;
+    while (box.parentElement && box.parentElement !== document.body &&
+           !leafs.some(o => o !== mk && box.parentElement.contains(o))) box = box.parentElement;
+    if (!boxes.includes(box)) boxes.push(box);
   }
-  const items = best.map(e => {
-    const q = s => e.querySelector(s);
-    const t = q('[class*="product_title__"], [class*="adProduct_title__"], [class*="superSavingProduct_title__"], [class*="title"] a');
-    const m = q('[class*="product_mall_title__"], [class*="adProduct_mall_title__"], [class*="product_mall__"], [class*="adProduct_mall__"], [class*="mall_title"]');
-    const list = q('[class*="product_mall_list__"], [class*="mall_list"]');
-    const mimg = m ? m.querySelector('img[alt]') : null;
-    const img = q('img[src^="http"]');
-    const txt = (e.innerText || '').trim();
-    return { title: t ? t.innerText.trim() : '', mall: (m && m.innerText.trim()) || (mimg ? mimg.alt : ''),
-             mall_list: list ? list.innerText.trim() : '', text: txt.slice(0, 1500),
-             ad: /adProduct/.test(e.className) || /(^|\n)\s*광고/.test(txt),
-             img: img ? (img.currentSrc || img.src) : '' };
-  }).filter(it => it.title || it.text);
+  boxes.sort((x, y) => (x.compareDocumentPosition(y) & Node.DOCUMENT_POSITION_FOLLOWING) ? -1 : 1);
+  const SKIP = /^(구매정보|적립|쇼핑몰별 최저가|전체보기.*|광고.*|등록일.*|찜.*|리뷰.*|.*pay.*|포인트.*|배송비.*|무료|최저|원|[\d,.]+원?|[\d.]+%.*|\(.*\)|★.*|구성 별 정보.*|판매처.*|신고하기|정보\s*수정\s*요청|.*>.*)$/i;
+  const items = boxes.map(box => {
+    const lines = (box.innerText || "").split("\n").map(l => l.trim()).filter(Boolean);
+    const links = [...box.querySelectorAll("a")].map(a => (a.innerText || "").trim()).filter(t => t.length >= 8 && !/신고|수정요청|구매정보|전체보기/.test(t));
+    const title = links[0] || lines.find(l => l.length >= 10) || "";
+    const mi = lines.findIndex(l => /^(신고하기|정보\s*수정\s*요청)$/.test(l) || /신고하기$/.test(l));
+    const after = mi >= 0 ? lines.slice(mi + 1) : [];
+    const catalog = after.includes("쇼핑몰별 최저가");
+    const names = after.map(l => l.replace(/\s*[\d,]+원?$/, "").trim()).filter(l => l && !SKIP.test(l) && l.length <= 30);
+    const srcOf = i => [i.currentSrc, i.src, i.dataset && i.dataset.src, i.getAttribute("data-src")].find(u => u && /^https?:/.test(u)) || "";
+    const im = [...box.querySelectorAll("img")].find(i => srcOf(i) && !/icon|logo|badge|npay/i.test(srcOf(i)));
+    return { title, mall: catalog ? "" : (names[0] || ""), mall_list: catalog ? names.join("\n") : "",
+             text: lines.join("\n").slice(0, 1500), ad: /(^|\n)광고/.test(lines.join("\n")),
+             img: im ? srcOf(im) : "" };
+  }).filter(it => it.title);
   return { text, blocked, captcha, url: location.href, images: images.slice(0, 200), items };
 }
 
 async function start(run, kws, auto) {
   btn.disabled = true; logBox.innerHTML = "";
+  // 시크릿 창 기준으로 검색 (로그인·검색기록 영향 없이). 시크릿 허용이 꺼져 있으면 일반 창으로.
+  let winId = null, incog = false;
+  try {
+    if (await chrome.extension.isAllowedIncognitoAccess()) {
+      const w = await chrome.windows.create({ incognito: true, focused: false, url: "about:blank", width: 1300, height: 900 });
+      winId = w.id; incog = true;
+      log("시크릿 창에서 검색할게요.");
+    } else {
+      log("⚠️ 시크릿 창 사용이 허용되지 않아 일반 창으로 검색해요. (설정 방법은 프로그램 안내 참고)", "err");
+    }
+  } catch (e) {}
   log(`키워드 ${kws.length}개를 확인할게요. (키워드 사이에 15~30초씩 쉬어요)`);
   for (let i = 0; i < kws.length; i++) {
     const kw = kws[i];
     log(`(${i + 1}/${kws.length}) '${kw}' 확인 중...`);
     const url = "https://search.shopping.naver.com/search/all?query=" + encodeURIComponent(kw);
-    const tab = await chrome.tabs.create({ url, active: false });
+    const tab = winId ? await chrome.tabs.create({ windowId: winId, url, active: true }) : await chrome.tabs.create({ url, active: false });
     await waitLoaded(tab.id); await sleep(2500 + Math.random() * 2000);
     let data = { text: "", blocked: false, url, images: [] };
     try { data = (await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: collect }))[0].result; }
@@ -92,12 +109,13 @@ async function start(run, kws, auto) {
     try { await chrome.tabs.remove(tab.id); } catch (e) {}
     try {
       await fetch(API + "/result", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ run_id: run, keyword: kw, ...data }) });
+        body: JSON.stringify({ run_id: run, keyword: kw, incognito: incog, ...data }) });
     } catch (e) { log("순위 확인 프로그램과 연결이 끊겼어요. run.bat 이 켜져 있는지 확인해 주세요.", "err"); break; }
     if (data.blocked) { log("네이버가 접속을 제한했어요. 확인을 멈출게요. 몇 시간 뒤에 다시 해 주세요.", "err"); break; }
     log(`  '${kw}' 완료`, "ok");
     if (i < kws.length - 1) await sleep(15000 + Math.random() * 15000);
   }
+  if (winId) { try { await chrome.windows.remove(winId); } catch (e) {} }
   try { await fetch(API + "/done", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ run_id: run }) }); } catch (e) {}
   log("끝났어요! 순위 확인 프로그램 화면에 자동으로 반영돼요.", "ok");
   btn.disabled = false;
