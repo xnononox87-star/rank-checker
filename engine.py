@@ -27,7 +27,7 @@ HISTORY_PATH = os.path.join(DATA_DIR, "history.json")
 os.makedirs(DATA_DIR, exist_ok=True)
 
 DEFAULT_CONFIG = {
-    "keywords": ["차수판", "창문차수막", "창문가림막", "플러드백", "방범창", "차양막"],
+    "keywords": ["차수판", "이동식차수판", "창문차수막", "창문가림막", "플러드백", "방범창", "차양막"],
     "top_n": 10,  # 1페이지 중 몇 위까지를 '상단'으로 볼지
     "naver_page_size": 40,
     "coupang_page_size": 36,
@@ -55,6 +55,13 @@ def load_config():
     if not cfg.get("brands_v2"):  # 1회: 브랜드 목록을 HGG/HGG테크/HGGTECH/가드랩/GUARDLAB 으로 통합
         merged = list(dict.fromkeys(DEFAULT_BRANDS + list(cfg.get("our_title_keywords") or []) + list(cfg.get("our_naver_mall_names") or [])))
         cfg.update({"our_title_keywords": merged, "our_naver_mall_names": [], "brands_v2": True})
+        if os.path.exists(CONFIG_PATH):
+            save_config(cfg)
+    if not cfg.get("kw_v2"):  # 1회: 이동식차수판 키워드 추가
+        kws = list(cfg.get("keywords") or [])
+        if "이동식차수판" not in kws:
+            kws.insert(kws.index("차수판") + 1 if "차수판" in kws else 0, "이동식차수판")
+        cfg.update({"keywords": kws, "kw_v2": True})
         if os.path.exists(CONFIG_PATH):
             save_config(cfg)
     return cfg
