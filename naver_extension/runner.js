@@ -107,74 +107,78 @@ const SITES = {
   coupang: { label: "쿠팡", url: kw => "https://www.coupang.com/np/search?component=&q=" + encodeURIComponent(kw) + "&channel=user", collect: collectCoupang },
 };
 
-async function runSite(site, run, kws, winId, firstTab) {
-  const S = SITES[site];
-  let tabId = firstTab || null;
-  for (let i = 0; i < kws.length; i++) {
-    const kw = kws[i], url = S.url(kw);
-    log(`[${S.label}] (${i + 1}/${kws.length}) '${kw}' 확인 중...`);
+// 탭 하나 열기: 시크릿 허용이면 사이트마다 시크릿 창을 하나씩 열고(그 창의 첫 탭을 계속 씀), 안 되면 일반 창 뒤쪽 탭
+async function openSearchTab(url, wantIncog) {
+  if (wantIncog) {
     try {
-      if (tabId !== null && i === 0 && firstTab) {
-        /* 시크릿 창을 열 때 이미 첫 키워드를 열어 둔 탭 */
-      } else if (tabId === null) {
-        const t = winId !== null ? await chrome.tabs.create({ windowId: winId, url, active: false })
-                                 : await chrome.tabs.create({ url, active: false });
-        tabId = t.id;
-      } else {
-        await chrome.tabs.update(tabId, { url });
-      }
-    } catch (e) { log(`[${S.label}] 탭을 열지 못했어요: ${e}`, "err"); break; }
-    await waitLoaded(tabId); await sleep(2500 + Math.random() * 2000);
-    let data = { blocked: false, url, items: [] };
-    try { data = (await chrome.scripting.executeScript({ target: { tabId }, func: S.collect }))[0].result; }
-    catch (e) { log(`[${S.label}] '${kw}' 화면을 읽지 못했어요: ${e}`, "err"); }
-    if (data.captcha) {
-      log(`[${S.label}] ⚠️ 보안 확인이 떴어요. 앞으로 띄운 탭에서 직접 풀어 주세요 (3분 기다려요)`, "err");
-      try { await chrome.tabs.update(tabId, { active: true }); const t = await chrome.tabs.get(tabId); await chrome.windows.update(t.windowId, { focused: true }); } catch (e) {}
-      for (let w = 0; w < 60; w++) {
-        await sleep(3000);
-        try {
-          const still = (await chrome.scripting.executeScript({ target: { tabId },
-            func: () => /보안 확인|자동입력 방지|영수증|정답을 입력|실제 사용자/.test((document.body.innerText || "").slice(0, 3000)) }))[0].result;
-          if (!still) break;
-        } catch (e) {}
-      }
-      await sleep(2000);
-      try { data = (await chrome.scripting.executeScript({ target: { tabId }, func: S.collect }))[0].result; } catch (e) {}
-    }
-    try {
-      await fetch(API + "/result", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ run_id: run, site, keyword: kw, incognito: winId !== null, ...data }) });
-    } catch (e) { log("순위 확인 프로그램과 연결이 끊겼어요. run.bat 이 켜져 있는지 확인해 주세요.", "err"); break; }
-    if (data.blocked) { log(`[${S.label}] 접속이 제한됐어요. ${S.label} 확인을 멈출게요. 몇 시간 뒤에 다시 해 주세요.`, "err"); break; }
-    log(`[${S.label}] '${kw}' 완료 (${(data.items || []).length}개 상품)`, "ok");
-    if (i < kws.length - 1) await sleep(15000 + Math.random() * 15000);
+      const w = await chrome.windows.create({ incognito: true, focused: false, width: 1300, height: 900, url });
+      const tabId = w.tabs && w.tabs[0] ? w.tabs[0].id : (await chrome.tabs.query({ windowId: w.id }))[0].id;
+      await sleep(800);
+      await chrome.tabs.get(tabId);   // 웨일이 창을 바로 닫거나 못 찾으면 여기서 실패 -> 일반 창으로
+      return { tabId, winId: w.id, incog: true };
+    } catch (e) { log("시크릿 창을 열지 못해 일반 창 뒤쪽 탭으로 검색해요. (" + e.message + ")", "err"); }
   }
-  if (tabId !== null && winId === null) { try { await chrome.tabs.remove(tabId); } catch (e) {} }
+  const t = await chrome.tabs.create({ url, active: false });
+  return { tabId: t.id, winId: null, incog: false };
+}
+
+async function runSite(site, run, kws, wantIncog) {
+  const S = SITES[site];
+  let tab = null;
+  try {
+    for (let i = 0; i < kws.length; i++) {
+      const kw = kws[i], url = S.url(kw);
+      log(`[${S.label}] (${i + 1}/${kws.length}) '${kw}' 확인 중...`);
+      try {
+        if (!tab) tab = await openSearchTab(url, wantIncog);
+        else await chrome.tabs.update(tab.tabId, { url });
+      } catch (e) {
+        // 탭이 사라졌으면 한 번 새로 연다
+        try { tab = await openSearchTab(url, wantIncog); } catch (e2) { log(`[${S.label}] 탭을 열지 못했어요: ${e2.message}`, "err"); break; }
+      }
+      await waitLoaded(tab.tabId); await sleep(2500 + Math.random() * 2000);
+      let data = { blocked: false, url, items: [] };
+      try { data = (await chrome.scripting.executeScript({ target: { tabId: tab.tabId }, func: S.collect }))[0].result; }
+      catch (e) { log(`[${S.label}] '${kw}' 화면을 읽지 못했어요: ${e.message}`, "err"); }
+      if (data.captcha) {
+        log(`[${S.label}] ⚠️ 보안 확인이 떴어요. 앞으로 띄운 창에서 직접 풀어 주세요 (3분 기다려요)`, "err");
+        try { await chrome.tabs.update(tab.tabId, { active: true }); const t = await chrome.tabs.get(tab.tabId); await chrome.windows.update(t.windowId, { focused: true }); } catch (e) {}
+        for (let w = 0; w < 60; w++) {
+          await sleep(3000);
+          try {
+            const still = (await chrome.scripting.executeScript({ target: { tabId: tab.tabId },
+              func: () => /보안 확인|자동입력 방지|영수증|정답을 입력|실제 사용자/.test((document.body.innerText || "").slice(0, 3000)) }))[0].result;
+            if (!still) break;
+          } catch (e) {}
+        }
+        await sleep(2000);
+        try { data = (await chrome.scripting.executeScript({ target: { tabId: tab.tabId }, func: S.collect }))[0].result; } catch (e) {}
+      }
+      try {
+        await fetch(API + "/result", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ run_id: run, site, keyword: kw, incognito: tab.incog, ...data }) });
+      } catch (e) { log("순위 확인 프로그램과 연결이 끊겼어요. run.bat 이 켜져 있는지 확인해 주세요.", "err"); break; }
+      if (data.blocked) { log(`[${S.label}] 접속이 제한됐어요. ${S.label} 확인을 멈출게요. 몇 시간 뒤에 다시 해 주세요.`, "err"); break; }
+      log(`[${S.label}] '${kw}' 완료 (${(data.items || []).length}개 상품)`, "ok");
+      if (i < kws.length - 1) await sleep(15000 + Math.random() * 15000);
+    }
+  } catch (e) { log(`[${S.label}] 오류로 멈췄어요: ${e.message}`, "err"); }
+  if (tab) {
+    try { if (tab.winId !== null) await chrome.windows.remove(tab.winId); else await chrome.tabs.remove(tab.tabId); } catch (e) {}
+  }
 }
 
 async function start(run, kws, sites, auto) {
   btn.disabled = true; logBox.innerHTML = "";
-  // 시크릿 창 기준으로 검색 (로그인·검색기록 영향 없이). 허용이 꺼져 있으면 일반 창 뒤쪽 탭으로.
-  let winId = null, firstTab = null;
-  try {
-    if (await chrome.extension.isAllowedIncognitoAccess()) {
-      const w = await chrome.windows.create({ incognito: true, focused: false, width: 1300, height: 900,
-        url: SITES[sites[0]].url(kws[0]) });
-      winId = w.id;
-      firstTab = (w.tabs && w.tabs[0]) ? w.tabs[0].id : null;
-      log("웨일 시크릿 창에서 검색할게요. (끝나면 저절로 닫혀요)");
-    } else {
-      log("⚠️ 시크릿 창 사용이 허용되지 않아 일반 창으로 검색해요.", "err");
-    }
-  } catch (e) { winId = null; }
+  let wantIncog = false;
+  try { wantIncog = await chrome.extension.isAllowedIncognitoAccess(); } catch (e) {}
+  log(wantIncog ? "웨일 시크릿 창에서 검색할게요. (끝나면 저절로 닫혀요)" : "⚠️ 시크릿 창 사용이 허용되지 않아 일반 창으로 검색해요.", wantIncog ? "" : "err");
   log(`키워드 ${kws.length}개 × ${sites.map(s => SITES[s].label).join("·")} (키워드 사이에 15~30초씩 쉬어요)`);
-  await Promise.all(sites.map((s, n) => runSite(s, run, kws, winId, n === 0 ? firstTab : null)));
-  if (winId !== null) { try { await chrome.windows.remove(winId); } catch (e) {} }
+  await Promise.all(sites.map(s => runSite(s, run, kws, wantIncog)));
   try { await fetch(API + "/done", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ run_id: run }) }); } catch (e) {}
   log("끝났어요! 순위 확인 프로그램 화면에 자동으로 반영돼요.", "ok");
   btn.disabled = false;
-  if (auto) { await sleep(3000); const t = await chrome.tabs.getCurrent(); if (t) chrome.tabs.remove(t.id); }
+  if (auto) { await sleep(3000); try { const t = await chrome.tabs.getCurrent(); if (t) chrome.tabs.remove(t.id); } catch (e) {} }
 }
 
 btn.onclick = async () => {
