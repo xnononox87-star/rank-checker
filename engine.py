@@ -102,6 +102,19 @@ def _title_is_ours(title, cfg):
     return any(_norm(k) and _norm(k) in t for k in cfg.get("our_title_keywords", []))
 
 
+def extract_coupang_ids(text):
+    """쿠팡 링크/번호 여러 줄 -> 상품번호 목록 (coupang.com/vp/products/123?itemId=.. 형태 지원)"""
+    ids = []
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        m = re.search(r"/products/(\d+)", line) or re.fullmatch(r"(\d{5,})", line)
+        if m and m.group(1) not in ids:
+            ids.append(m.group(1))
+    return ids
+
+
 def summarize(items, cfg):
     """순위 목록 -> 우리 상품 위치 요약"""
     ours = [it for it in items if it.get("ours")]

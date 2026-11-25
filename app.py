@@ -292,14 +292,14 @@ with tab4:
         st.markdown("#### 우리 상품 찾는 기준")
         malls = st.text_input("네이버 스토어 이름 (쉼표로 구분)", ", ".join(cfg["our_naver_mall_names"]))
         tkw = st.text_input("상품명에 들어간 우리 브랜드 (쉼표로 구분)", ", ".join(cfg["our_title_keywords"]))
-        cpids = st.text_area("쿠팡 상품번호 (상품 주소 coupang.com/vp/products/숫자 의 숫자, 한 줄에 하나)", "\n".join(cfg["our_coupang_product_ids"]), height=120)
+        cpids = st.text_area("쿠팡 우리 상품 — 상품 링크를 그대로 붙여넣거나 번호만 넣어도 돼요 (한 줄에 하나)", "\n".join(cfg["our_coupang_product_ids"]), height=120)
 
         if st.form_submit_button("저장", type="primary"):
             split_lines = lambda s: [x.strip() for x in s.splitlines() if x.strip()]
             split_comma = lambda s: [x.strip() for x in s.split(",") if x.strip()]
             cfg.update({"keywords": split_lines(kw_text), "top_n": int(top_n),
                         "searchad_api_key": akey.strip(), "searchad_secret": asec.strip(), "searchad_customer_id": acid.strip(),
-                        "our_naver_mall_names": split_comma(malls), "our_title_keywords": split_comma(tkw), "our_coupang_product_ids": split_lines(cpids)})
+                        "our_naver_mall_names": split_comma(malls), "our_title_keywords": split_comma(tkw), "our_coupang_product_ids": E.extract_coupang_ids(cpids)})
             E.save_config(cfg)
             st.success("저장했어요. 키는 이 컴퓨터의 config.json 파일에만 저장돼요.")
             st.rerun()
