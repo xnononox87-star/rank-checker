@@ -52,6 +52,11 @@ def load_config():
                 cfg.update(json.load(f))
         except Exception:
             pass
+    if not cfg.get("brands_v2"):  # 1회: 브랜드 목록을 HGG/HGG테크/HGGTECH/가드랩/GUARDLAB 으로 통합
+        merged = list(dict.fromkeys(DEFAULT_BRANDS + list(cfg.get("our_title_keywords") or []) + list(cfg.get("our_naver_mall_names") or [])))
+        cfg.update({"our_title_keywords": merged, "our_naver_mall_names": [], "brands_v2": True})
+        if os.path.exists(CONFIG_PATH):
+            save_config(cfg)
     return cfg
 
 
@@ -97,9 +102,18 @@ def _norm(s):
     return re.sub(r"\s+", "", (s or "")).lower()
 
 
+DEFAULT_BRANDS = ["HGG", "HGG테크", "HGGTECH", "가드랩", "GUARDLAB"]
+
+
+def our_brands(cfg):
+    b = list(cfg.get("our_title_keywords") or []) + list(cfg.get("our_naver_mall_names") or [])
+    return [x for x in dict.fromkeys(b) if x] or DEFAULT_BRANDS
+
+
 def _title_is_ours(title, cfg):
+    """스토어 이름이든 상품명이든 우리 브랜드가 들어 있으면 우리 상품 (대소문자·띄어쓰기 무시)"""
     t = _norm(title)
-    return any(_norm(k) and _norm(k) in t for k in cfg.get("our_title_keywords", []))
+    return any(_norm(k) in t for k in our_brands(cfg))
 
 
 def extract_coupang_ids(text):
@@ -109,9 +123,10 @@ def extract_coupang_ids(text):
         line = line.strip()
         if not line:
             continue
-        m = re.search(r"/products/(\d+)", line) or re.fullmatch(r"(\d{5,})", line)
-        if m and m.group(1) not in ids:
-            ids.append(m.group(1))
+        found = re.findall(r"(?:/products/|itemId=|vendorItemId=)(\d+)", line) or re.findall(r"\d{5,}", line)
+        for f in found:
+            if f not in ids:
+                ids.append(f)
     return ids
 
 
@@ -183,7 +198,9 @@ _COUPANG_JS = r"""
     const priceM = text.match(/([\d,]+)\s*원/);
     const isAd = !!box.querySelector('[class*="ad-badge"], [class*="AdMark"], [class*="adMark"], [class*="AdBadge"]')
                  || /(^|\n)\s*AD\s*(\n|$)/.test(text);
-    out.push({product_id: m[1], name: name, price: priceM ? priceM[1] : '', is_ad: isAd});
+    const ids = [m[1]];
+    for (const k of ['itemId', 'vendorItemId']) { const mm = a.href.match(new RegExp(k + '=(\\d+)')); if (mm) ids.push(mm[1]); }
+    out.push({product_id: m[1], ids: ids, name: name, price: priceM ? priceM[1] : '', is_ad: isAd});
   }
   return out;
 }
@@ -249,7 +266,7 @@ def _coupang_one(page, kw, cfg, progress):
     for i, it in enumerate(raw[:size], 1):
         if not it["is_ad"]:
             organic += 1
-        ours = it["product_id"] in pids or _title_is_ours(it["name"], cfg)
+        ours = bool(pids & set(it.get("ids") or [it["product_id"]])) or _title_is_ours(it["name"], cfg)
         items.append({"rank": i, "organic_rank": None if it["is_ad"] else organic,
                       "title": it["name"], "price": it["price"], "ad": it["is_ad"],
                       "product_id": it["product_id"],
@@ -468,13 +485,12 @@ def parse_naver_text(text, cfg):
         if _NAVER_END.search(l):
             blocks.append(cur)
             cur = []
-    mall_names = [m for m in cfg.get("our_naver_mall_names", []) if m]
     items = []
     for i, b in enumerate(blocks, 1):
         joined = "\n".join(b)
         title = next((l for l in b if len(l) > 12 and "원" not in l[-2:] and not l.startswith("등록일")), b[0])
         ad = any(re.match(r"^광고", l) for l in b)
-        ours = any(_norm(l) == _norm(m) for l in b for m in mall_names) or _title_is_ours(joined, cfg)
+        ours = _title_is_ours(joined, cfg)
         items.append({"rank": i, "title": title[:80], "ad": ad, "ours": ours})
     return items
 
