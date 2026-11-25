@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """순위 확인 프로그램 - 데이터 수집/분석 엔진
-- 네이버 쇼핑: 네이버 검색 API(쇼핑) 사용
-- 쿠팡: 로그인하지 않은 별도 크롬 창을 열어 검색 결과만 읽음 (클릭 안 함)
+- 네이버 쇼핑·쿠팡: 로그인하지 않은 별도 크롬 창을 열어 검색 결과만 읽음 (클릭 안 함)
+  (네이버 쇼핑 검색 API는 2026-07-31 종료되어 사용하지 않음)
 - 네이버 광고: 네이버 검색광고 API 사용
 - 자료 넣기: 광고 리포트 엑셀/CSV, 붙여넣은 검색결과 텍스트, 캡처 이미지(OCR, 윈도우 전용)
 """
@@ -177,14 +177,80 @@ _COUPANG_JS = r"""
 """
 
 
-def coupang_search_many(keywords, cfg, progress=None):
-    """로그인하지 않은 전용 크롬 창으로 쿠팡 검색 결과 1페이지를 읽는다. 클릭은 하지 않는다."""
-    from playwright.sync_api import sync_playwright
+def _wait_if_captcha(page, progress, label):
+    """보안문자(캡차)가 뜨면 CH님이 직접 풀 때까지 최대 90초 기다린다."""
+    words = ["보안 확인", "자동입력 방지", "captcha", "CAPTCHA", "보안문자", "로봇이 아닙니다"]
+    try:
+        body = page.inner_text("body")[:3000]
+    except Exception:
+        return
+    if any(w in body for w in words):
+        if progress:
+            progress(f"{label}: 보안문자가 떴어요. 열린 크롬 창에서 직접 풀어 주세요 (90초 기다려요)")
+        for _ in range(45):
+            page.wait_for_timeout(2000)
+            try:
+                body = page.inner_text("body")[:3000]
+            except Exception:
+                continue
+            if not any(w in body for w in words):
+                page.wait_for_timeout(2000)
+                return
 
+
+def _scroll(page, times=8):
+    for _ in range(times):
+        page.mouse.wheel(0, random.randint(1100, 1600))
+        page.wait_for_timeout(random.randint(400, 800))
+
+
+def _naver_one(page, kw, cfg, progress):
+    size = int(cfg.get("naver_page_size", 40))
+    url = f"https://search.shopping.naver.com/search/all?query={quote(kw)}&pagingIndex=1&pagingSize={size}&sort=rel"
+    page.goto(url, wait_until="domcontentloaded", timeout=45000)
+    page.wait_for_timeout(random.randint(3000, 5000))
+    _wait_if_captcha(page, progress, f"네이버 '{kw}'")
+    _scroll(page, 10)
+    text = page.inner_text("body")
+    items = parse_naver_text(text, cfg)[:size]
+    if not items:
+        return {"error": "네이버 쇼핑 결과를 읽지 못했어요(보안문자·화면 구조 변경 가능). 붙여넣기로 확인해 주세요."}
+    return {"items": items}
+
+
+def _coupang_one(page, kw, cfg, progress):
     size = int(cfg.get("coupang_page_size", 36))
     pids = {str(p).strip() for p in cfg.get("our_coupang_product_ids", []) if str(p).strip()}
-    profile = os.path.join(DATA_DIR, "coupang_profile")
-    results = {}
+    url = f"https://www.coupang.com/np/search?q={quote(kw)}&page=1&listSize={size}"
+    page.goto(url, wait_until="domcontentloaded", timeout=45000)
+    page.wait_for_timeout(random.randint(3000, 5000))
+    _wait_if_captcha(page, progress, f"쿠팡 '{kw}'")
+    _scroll(page, 8)
+    raw = page.evaluate(_COUPANG_JS)
+    if not raw:
+        body = (page.inner_text("body") or "")[:2000]
+        blocked = any(w in body for w in ["Access Denied", "접근이 차단", "비정상적인"]) or "denied" in page.title().lower()
+        return {"error": "쿠팡이 자동 검색을 차단했어요. 붙여넣기로 확인해 주세요." if blocked
+                else "검색 결과를 읽지 못했어요(화면 구조 변경 가능). 붙여넣기로 확인해 주세요."}
+    items, organic = [], 0
+    for i, it in enumerate(raw[:size], 1):
+        if not it["is_ad"]:
+            organic += 1
+        ours = it["product_id"] in pids or _title_is_ours(it["name"], cfg)
+        items.append({"rank": i, "organic_rank": None if it["is_ad"] else organic,
+                      "title": it["name"], "price": it["price"], "ad": it["is_ad"],
+                      "product_id": it["product_id"],
+                      "link": f"https://www.coupang.com/vp/products/{it['product_id']}", "ours": ours})
+    return {"items": items}
+
+
+def browser_search_many(keywords, cfg, do_naver=True, do_coupang=True, progress=None):
+    """로그인하지 않은 전용 크롬 창으로 네이버 쇼핑·쿠팡 검색 결과 1페이지를 읽는다. 클릭은 하지 않는다."""
+    from playwright.sync_api import sync_playwright
+
+    profile = os.path.join(DATA_DIR, "browser_profile")
+    results = {"naver": {}, "coupang": {}}
+    jobs = [("naver", kw) for kw in keywords if do_naver] + [("coupang", kw) for kw in keywords if do_coupang]
     with sync_playwright() as p:
         ctx = p.chromium.launch_persistent_context(
             profile, channel="chrome", headless=False, locale="ko-KR",
@@ -192,41 +258,25 @@ def coupang_search_many(keywords, cfg, progress=None):
             args=["--disable-blink-features=AutomationControlled"],
         )
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
-        try:
-            page.goto("https://www.coupang.com/", wait_until="domcontentloaded", timeout=45000)
-            page.wait_for_timeout(random.randint(2500, 4000))
-        except Exception:
-            pass
-        for n, kw in enumerate(keywords):
+        last_site = None
+        for n, (site, kw) in enumerate(jobs):
+            label = "네이버" if site == "naver" else "쿠팡"
             if progress:
-                progress(kw)
+                progress(f"{label} '{kw}' 확인 중... ({n + 1}/{len(jobs)}, 키워드 사이에 몇 초씩 쉬어요)")
             try:
-                url = f"https://www.coupang.com/np/search?q={quote(kw)}&page=1&listSize={size}"
-                page.goto(url, wait_until="domcontentloaded", timeout=45000)
-                page.wait_for_timeout(random.randint(3000, 5000))
-                for _ in range(8):
-                    page.mouse.wheel(0, random.randint(1100, 1600))
-                    page.wait_for_timeout(random.randint(400, 800))
-                raw = page.evaluate(_COUPANG_JS)
-                body = (page.inner_text("body") or "")[:2000]
-                if not raw:
-                    blocked = any(w in body for w in ["Access Denied", "접근이 차단", "비정상적인"]) or "denied" in page.title().lower()
-                    results[kw] = {"error": "쿠팡이 자동 검색을 차단했어요. 캡처/붙여넣기로 확인해 주세요." if blocked
-                                   else "검색 결과를 읽지 못했어요(화면 구조 변경 가능). 캡처/붙여넣기로 확인해 주세요."}
-                else:
-                    items, organic = [], 0
-                    for i, it in enumerate(raw[:size], 1):
-                        if not it["is_ad"]:
-                            organic += 1
-                        ours = it["product_id"] in pids or _title_is_ours(it["name"], cfg)
-                        items.append({"rank": i, "organic_rank": None if it["is_ad"] else organic,
-                                      "title": it["name"], "price": it["price"], "ad": it["is_ad"],
-                                      "product_id": it["product_id"],
-                                      "link": f"https://www.coupang.com/vp/products/{it['product_id']}", "ours": ours})
-                    results[kw] = {"items": items}
+                if site != last_site:
+                    home = "https://shopping.naver.com/" if site == "naver" else "https://www.coupang.com/"
+                    try:
+                        page.goto(home, wait_until="domcontentloaded", timeout=45000)
+                        page.wait_for_timeout(random.randint(2500, 4000))
+                    except Exception:
+                        pass
+                    last_site = site
+                fn = _naver_one if site == "naver" else _coupang_one
+                results[site][kw] = fn(page, kw, cfg, progress)
             except Exception as e:  # noqa
-                results[kw] = {"error": f"오류: {e}"}
-            if n < len(keywords) - 1:
+                results[site][kw] = {"error": f"오류: {e}"}
+            if n < len(jobs) - 1:
                 time.sleep(random.uniform(6, 12))
         ctx.close()
     return results

@@ -81,27 +81,25 @@ with tab1:
         kws = st.multiselect("확인할 키워드", cfg["keywords"], default=cfg["keywords"])
     with c2:
         use_naver = st.checkbox("네이버 쇼핑", value=True)
-        use_coupang = st.checkbox("쿠팡 (크롬 창이 잠깐 열려요)", value=True)
+        use_coupang = st.checkbox("쿠팡", value=True)
+        st.caption("확인하는 동안 크롬 창이 따로 열려요. 끝날 때까지 건드리지 마세요.")
     st.caption(f"'상단' = 1페이지 {cfg['top_n']}위 이내 · 순위는 1페이지 안에서 몇 번째인지예요. 같은 상품을 여러 개 등록했다면 모두 표시돼요.")
 
     if st.button("▶ 순위 확인 시작", type="primary", disabled=not kws):
         run_time = E.now_str()
         res = {"time": run_time, "naver": {}, "coupang": {}}
-        if use_naver:
-            with st.spinner("네이버 쇼핑 확인 중..."):
-                for kw in kws:
-                    try:
-                        items = E.naver_shop_search(kw, cfg)
-                        res["naver"][kw] = {"items": items}
-                    except Exception as e:
-                        res["naver"][kw] = {"error": str(e)}
-        if use_coupang:
+        if use_naver or use_coupang:
             status_box = st.empty()
             try:
-                cres = E.coupang_search_many(kws, cfg, progress=lambda k: status_box.info(f"쿠팡 '{k}' 확인 중... (키워드 사이에 몇 초씩 쉬어요)"))
-                res["coupang"] = cres
+                br = E.browser_search_many(kws, cfg, do_naver=use_naver, do_coupang=use_coupang,
+                                           progress=lambda m: status_box.info(m))
+                res["naver"], res["coupang"] = br["naver"], br["coupang"]
             except Exception as e:
-                res["coupang"] = {kw: {"error": f"크롬을 열지 못했어요: {e}"} for kw in kws}
+                msg = f"크롬을 열지 못했어요: {e}"
+                if use_naver:
+                    res["naver"] = {kw: {"error": msg} for kw in kws}
+                if use_coupang:
+                    res["coupang"] = {kw: {"error": msg} for kw in kws}
             status_box.empty()
         for plat in ("naver", "coupang"):
             for kw, r in res[plat].items():
@@ -119,7 +117,7 @@ with tab1:
         if hist:
             st.info(f"마지막 확인: {hist[-1]['time']} — [순위 확인 시작]을 누르면 새로 확인해요.")
         else:
-            st.info("처음이시면 [설정] 탭에서 API 키를 먼저 입력하고, [순위 확인 시작]을 눌러 주세요.")
+            st.info("[순위 확인 시작]을 누르면 크롬 창이 열려 네이버·쿠팡을 차례로 확인해요.")
     else:
         st.subheader(f"결과 · {res['time']}")
         rows_html = ["<table style='width:100%;border-collapse:collapse;font-size:0.95rem'>",
@@ -160,13 +158,13 @@ with tab1:
                         df["우리"] = df["ours"].map(lambda x: "⭐" if x else "")
                         df["광고"] = df["ad"].map(lambda x: "광고" if x else "")
                         show = ["rank", "우리", "광고", "title", "price"] + (["mall", "category"] if plat == "naver" else [])
-                        df = df[show].rename(columns={"rank": "순위", "title": "상품명", "price": "가격", "mall": "판매처", "category": "카테고리"})
+                        df = df[[c for c in show if c in df.columns]].rename(columns={"rank": "순위", "title": "상품명", "price": "가격", "mall": "판매처", "category": "카테고리"})
                         only = st.toggle("우리 상품만", key=f"only_{plat}_{kw}")
                         if only:
                             df = df[df["우리"] == "⭐"]
                         st.dataframe(df, hide_index=True, width="stretch", height=min(38 * (len(df) + 1) + 3, 420))
                         if plat == "naver":
-                            st.caption("네이버는 공식 검색 API 기준(광고 자리 제외)이라 실제 화면 순서와 조금 다를 수 있어요.")
+                            st.caption("네이버 순위는 광고 자리를 포함한 화면 순서예요.")
                         else:
                             st.caption("쿠팡 순위는 광고 자리를 포함한 화면 순서예요.")
 
@@ -285,11 +283,6 @@ with tab4:
         kw_text = st.text_area("한 줄에 하나씩", "\n".join(cfg["keywords"]), height=150)
         top_n = st.number_input("몇 위까지를 '상단'으로 볼까요?", 1, 40, int(cfg["top_n"]))
 
-        st.markdown("#### 네이버 검색 API (순위 확인용)")
-        st.caption("developers.naver.com → Application → 애플리케이션 등록 → 사용 API '검색'")
-        ncid = st.text_input("Client ID", cfg["naver_client_id"])
-        nsec = st.text_input("Client Secret", cfg["naver_client_secret"], type="password")
-
         st.markdown("#### 네이버 검색광고 API (광고 성과용)")
         st.caption("searchad.naver.com 광고시스템 → 도구 → API 사용 관리")
         akey = st.text_input("액세스 라이선스", cfg["searchad_api_key"])
@@ -298,7 +291,6 @@ with tab4:
 
         st.markdown("#### 우리 상품 찾는 기준")
         malls = st.text_input("네이버 스토어 이름 (쉼표로 구분)", ", ".join(cfg["our_naver_mall_names"]))
-        npids = st.text_area("네이버 가격비교 상품번호 (광고 리포트의 9자리~11자리 번호, 한 줄에 하나)", "\n".join(cfg["our_naver_product_ids"]), height=120)
         tkw = st.text_input("상품명에 들어간 우리 브랜드 (쉼표로 구분)", ", ".join(cfg["our_title_keywords"]))
         cpids = st.text_area("쿠팡 상품번호 (상품 주소 coupang.com/vp/products/숫자 의 숫자, 한 줄에 하나)", "\n".join(cfg["our_coupang_product_ids"]), height=120)
 
@@ -306,10 +298,8 @@ with tab4:
             split_lines = lambda s: [x.strip() for x in s.splitlines() if x.strip()]
             split_comma = lambda s: [x.strip() for x in s.split(",") if x.strip()]
             cfg.update({"keywords": split_lines(kw_text), "top_n": int(top_n),
-                        "naver_client_id": ncid.strip(), "naver_client_secret": nsec.strip(),
                         "searchad_api_key": akey.strip(), "searchad_secret": asec.strip(), "searchad_customer_id": acid.strip(),
-                        "our_naver_mall_names": split_comma(malls), "our_naver_product_ids": split_lines(npids),
-                        "our_title_keywords": split_comma(tkw), "our_coupang_product_ids": split_lines(cpids)})
+                        "our_naver_mall_names": split_comma(malls), "our_title_keywords": split_comma(tkw), "our_coupang_product_ids": split_lines(cpids)})
             E.save_config(cfg)
             st.success("저장했어요. 키는 이 컴퓨터의 config.json 파일에만 저장돼요.")
             st.rerun()
