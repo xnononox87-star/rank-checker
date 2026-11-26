@@ -925,12 +925,17 @@ def _match_image(title, images):
     return ""
 
 
+_NOT_MALL = re.compile(r"^(톡톡|톡톡문의|문의|공유|찜하기|구매정보|정보)$")
+
+
 def _items_from_dom(raw, cfg):
     """확장 프로그램이 상품 칸 단위로 읽어 온 결과 -> 순위 목록 (광고 포함 화면 순서)"""
     out = []
     for i, it in enumerate(raw[:60], 1):
         title = (it.get("title") or (it.get("text") or "").split("\n")[0]).strip()
         mall = re.sub(r"\s*정보$", "", (it.get("mall") or "").split("\n")[0]).strip()
+        if _NOT_MALL.match(mall):
+            mall = ""
         joined = "\n".join([title, it.get("mall") or "", it.get("mall_list") or "", it.get("text") or "", it.get("alts") or ""])
         ours = bool(it.get("ours_js")) or _title_is_ours(joined, cfg)
         if ours:

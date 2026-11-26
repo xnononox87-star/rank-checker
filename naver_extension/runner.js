@@ -40,7 +40,7 @@ async function collectNaver() {
     if (!boxes.includes(box)) boxes.push(box);
   }
   boxes.sort((x, y) => (x.compareDocumentPosition(y) & Node.DOCUMENT_POSITION_FOLLOWING) ? -1 : 1);
-  const SKIP = /^(구매정보|적립|쇼핑몰별 최저가|전체보기.*|광고.*|등록일.*|찜.*|리뷰.*|.*pay.*|포인트.*|배송비.*|무료|최저|원|[\d,.]+원?|[\d.]+%.*|\(.*\)|★.*|구성 별 정보.*|판매처.*|신고하기|정보\s*수정\s*요청|.*>.*)$/i;
+  const SKIP = /^(톡톡|톡톡문의|문의|공유|찜하기|장바구니|구매하기|상세보기|N\+.*|네이버페이|오늘출발|도착보장|무료배송|구매정보|적립|쇼핑몰별 최저가|전체보기.*|광고.*|등록일.*|찜.*|리뷰.*|.*pay.*|포인트.*|배송비.*|무료|최저|원|[\d,.]+원?|[\d.]+%.*|\(.*\)|★.*|구성 별 정보.*|판매처.*|신고하기|정보\s*수정\s*요청|.*>.*)$/i;
   const srcOf = i => [i.currentSrc, i.src, i.dataset && i.dataset.src, i.getAttribute("data-src")].find(u => u && /^https?:/.test(u)) || "";
   const items = boxes.map((box, idx) => {
     box.setAttribute("data-hgg-idx", String(idx));
@@ -53,7 +53,10 @@ async function collectNaver() {
     const catalog = after.includes("쇼핑몰별 최저가");
     const names = after.map(l => l.replace(/\s*[\d,]+원?$/, "").trim()).filter(l => l && !SKIP.test(l) && l.length <= 30);
     const im = [...box.querySelectorAll("img")].find(i => srcOf(i) && !/icon|logo|badge|npay/i.test(srcOf(i)));
-    return { title, mall: catalog ? "" : (names[0] || ""), mall_list: catalog ? names.join("\n") : "",
+    // 판매처가 글자 없이 로고 이미지로만 나오면 그 이미지 이름(alt)을 판매처로
+    const logoAlt = [...box.querySelectorAll("img[alt]")].map(i => (i.alt || "").trim())
+      .find(a => a && a !== title && a.length <= 30 && !/톡톡|npay|네이버페이|배지|badge|아이콘/i.test(a)) || "";
+    return { title, mall: catalog ? "" : (names[0] || logoAlt), mall_list: catalog ? names.join("\n") : "",
              text: lines.join("\n").slice(0, 1500), alts, idx, img: im ? srcOf(im) : "" };
   }).filter(it => it.title);
   const images = [...document.querySelectorAll("img")].map(i => ({ src: srcOf(i), alt: i.alt || "",
