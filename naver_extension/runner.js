@@ -18,9 +18,17 @@ function waitLoaded(tabId) {
 // 네이버 가격비교: 상품마다 한 번 나오는 '신고하기' / '정보 수정요청' 을 기준으로 상품 한 줄씩 읽는다
 async function collectNaver() {
   const sleep = ms => new Promise(r => setTimeout(r, ms));
-  for (let i = 0; i < 25; i++) {
-    window.scrollBy(0, 900 + Math.random() * 500); await sleep(450 + Math.random() * 450);
-    if (window.innerHeight + window.scrollY >= document.body.scrollHeight - 50) break;
+  // 아래로 내려야 상품이 더 불러와져서, 맨 아래에서 상품 수가 더 안 늘 때까지 천천히 내린다
+  const count = () => [...document.querySelectorAll("a, button, span, em, div, p")]
+    .filter(el => /^\s*(신고하기|정보\s*수정\s*요청)\s*$/.test(el.textContent || "") && el.children.length <= 1).length;
+  let last = -1, still = 0;
+  for (let i = 0; i < 60 && still < 4; i++) {
+    window.scrollBy(0, 700 + Math.random() * 400); await sleep(500 + Math.random() * 400);
+    if (window.innerHeight + window.scrollY >= document.body.scrollHeight - 50) {
+      await sleep(900);
+      const n = count();
+      if (n === last) still++; else { still = 0; last = n; }
+    }
   }
   window.scrollTo(0, 0);
   const text = document.body.innerText || "";
@@ -204,7 +212,14 @@ async function runSite(site, run, kws, wantIncog) {
       await waitLoaded(tabId); await sleep(2500 + Math.random() * 2000);
       let data = { blocked: false, url, items: [] };
       let readErr = "";
-      try { data = (await chrome.scripting.executeScript({ target: { tabId }, func: S.collect }))[0].result; }
+      const collectNow = () => withLock(async () => {
+        if (site === "naver") {   // 가려진 창은 아래쪽 상품을 안 불러와서, 읽는 동안 앞으로 띄운다
+          try { await chrome.tabs.update(tabId, { active: true }); const t = await chrome.tabs.get(tabId); await chrome.windows.update(t.windowId, { focused: true }); } catch (e) {}
+          await sleep(600);
+        }
+        return (await chrome.scripting.executeScript({ target: { tabId }, func: S.collect }))[0].result;
+      });
+      try { data = await collectNow(); }
       catch (e) { readErr = e.message || String(e); }
       if (readErr) {
         let cur = "";
@@ -220,7 +235,7 @@ async function runSite(site, run, kws, wantIncog) {
         try { if (old !== null) await chrome.windows.remove(old); } catch (e) {}
         tabId = await newSearchTab(url, w);
         await waitLoaded(tabId); await sleep(2500 + Math.random() * 2000);
-        try { data = (await chrome.scripting.executeScript({ target: { tabId }, func: S.collect }))[0].result; }
+        try { data = await collectNow(); }
         catch (e) { log(`[${S.label}] '${kw}' 화면을 읽지 못했어요: ${e.message}`, "err"); }
       }
       if (data.captcha) {
@@ -235,7 +250,7 @@ async function runSite(site, run, kws, wantIncog) {
           } catch (e) {}
         }
         await sleep(2000);
-        try { data = (await chrome.scripting.executeScript({ target: { tabId }, func: S.collect }))[0].result; } catch (e) {}
+        try { data = await collectNow(); } catch (e) {}
       }
       if (!data.blocked && !data.login) await addShots(tabId, data);
       try {
