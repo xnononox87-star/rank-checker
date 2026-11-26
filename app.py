@@ -138,7 +138,7 @@ with tab1:
     if st.button("▶ 순위 확인 시작", type="primary", disabled=not kws):
         run_time = E.now_str()
         prev = st.session_state.get("last") or {}
-        res = {"time": run_time, "naver": dict(prev.get("naver") or {}), "coupang": dict(prev.get("coupang") or {})}
+        res = {"time": run_time, "naver": {}, "coupang": {}}
         naver_run = E.request_naver(kws, [x for x, on in (("naver", w_naver), ("coupang", w_coupang)) if on]) if use_whale else None
         if use_naver or use_coupang:
             status_box = st.empty()
@@ -163,10 +163,10 @@ with tab1:
                 if state == "waiting" and time.time() - t0 > 60:
                     wait_box.warning("웨일 확장이 응답하지 않아요. 웨일이 켜져 있는지, whale://extensions 에서 'HGG 네이버 순위 확인'의 [새로고침]을 눌렀는지 확인해 주세요.")
                     break
-                if time.time() - t0 > 600:
+                if time.time() - t0 > 1200:
                     wait_box.warning("네이버 확인이 오래 걸려서 기다리기를 멈췄어요. 끝나면 [네이버 결과 불러오기]를 눌러 주세요.")
                     break
-                wait_box.info(f"웨일 시크릿 창에서 확인 중... ({n}/{len(kws) * (int(w_naver) + int(w_coupang))})")
+                wait_box.info(f"웨일에서 확인 중... ({n}/{len(kws) * (int(w_naver) + int(w_coupang))}) · 네이버는 차단을 피하려고 키워드 사이 1~2분씩 쉬어서 10분쯤 걸려요")
                 time.sleep(3)
             wait_box.empty()
             st.session_state["last"] = res
@@ -198,7 +198,7 @@ with tab1:
     if (st.button("결과 불러오기") or auto) and run:
         parsed = E.parse_inbox(run, cfg)
         parsed_c = E.parse_inbox_coupang(run, cfg)
-        last = st.session_state.get("last") or {"time": E.now_str(), "naver": {}, "coupang": {}}
+        last = {"time": E.now_str(), "naver": {}, "coupang": {}}  # 이번 확인 결과만 (예전 결과를 섞지 않음)
         rt = f"{run['run_id'][:4]}-{run['run_id'][4:6]}-{run['run_id'][6:8]} {run['run_id'][9:11]}:{run['run_id'][11:13]}"
         already = {h.get("run_id") for h in E.load_history() if h.get("run_id")}
         for kw, r in parsed.items():
@@ -272,7 +272,7 @@ with tab1:
             for plat in ("naver", "coupang"):
                 r = res[plat].get(kw)
                 if r is None:
-                    cells.append("<span style='color:#999'>확인 안 함</span>")
+                    cells.append("<span style='color:#999'>이번엔 확인 못 함<br><span style='font-size:0.8rem'>(차단·중단 등)</span></span>")
                 elif "error" in r:
                     cells.append(badge("확인불가") + f"<br><span style='color:#999;font-size:0.8rem'>{r['error'][:60]}</span>")
                 else:

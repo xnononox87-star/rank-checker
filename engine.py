@@ -813,6 +813,10 @@ def start_receiver():
                 except Exception:
                     self._send(200, {"version": ""})
                 return
+            if self.path.startswith("/ours"):
+                c = load_config()
+                self._send(200, {"brands": our_brands(c), "ids": [str(x) for x in c.get("our_coupang_product_ids", [])]})
+                return
             if self.path.startswith("/pending"):
                 job = take_pending()
                 self._send(200, job or {})
@@ -927,14 +931,14 @@ def _items_from_dom(raw, cfg):
     for i, it in enumerate(raw[:60], 1):
         title = (it.get("title") or (it.get("text") or "").split("\n")[0]).strip()
         mall = re.sub(r"\s*정보$", "", (it.get("mall") or "").split("\n")[0]).strip()
-        joined = "\n".join([title, it.get("mall") or "", it.get("mall_list") or ""])
-        ours = _title_is_ours(joined, cfg)
+        joined = "\n".join([title, it.get("mall") or "", it.get("mall_list") or "", it.get("text") or "", it.get("alts") or ""])
+        ours = bool(it.get("ours_js")) or _title_is_ours(joined, cfg)
         if ours:
-            mall = _store_of(it.get("mall_list") or "", it.get("mall") or "", cfg) or mall
+            mall = _store_of((it.get("mall_list") or "") + "\n" + (it.get("alts") or ""), it.get("mall") or "", cfg) or mall or "우리 상점"
         elif not mall and it.get("mall_list"):
             mall = "가격비교"
         out.append({"rank": i, "title": title[:80], "mall": mall, "ad": bool(it.get("ad")), "ours": ours,
-                    "thumb_url": it.get("img", "") if ours else ""})
+                    "thumb_url": (it.get("shot") or it.get("img", "")) if ours else ""})
     return out
 
 
@@ -953,11 +957,11 @@ def parse_inbox_coupang(run, cfg, shot_dir=None):
         items = []
         for i, it in enumerate(raw[:120], 1):
             ids = it.get("ids") or [it.get("product_id", "")]
-            ours = bool(pids & set(ids)) or _title_is_ours(it.get("name", ""), cfg)
+            ours = bool(it.get("ours_js")) or bool(pids & set(ids)) or _title_is_ours((it.get("name") or "") + "\n" + (it.get("alts") or ""), cfg)
             items.append({"rank": i, "title": (it.get("name") or "")[:80], "price": it.get("price", ""),
                           "product_id": it.get("product_id", ""), "ad": False, "ours": ours,
                           "mall": coupang_stores(cfg, ids) if ours else "",
-                          "thumb_url": it.get("img", "") if ours else "",
+                          "thumb_url": (it.get("shot") or it.get("img", "")) if ours else "",
                           "link": f"https://www.coupang.com/vp/products/{it.get('product_id', '')}"})
         out[kw] = {"items": items}
     return out

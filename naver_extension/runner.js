@@ -42,7 +42,9 @@ async function collectNaver() {
   boxes.sort((x, y) => (x.compareDocumentPosition(y) & Node.DOCUMENT_POSITION_FOLLOWING) ? -1 : 1);
   const SKIP = /^(구매정보|적립|쇼핑몰별 최저가|전체보기.*|광고.*|등록일.*|찜.*|리뷰.*|.*pay.*|포인트.*|배송비.*|무료|최저|원|[\d,.]+원?|[\d.]+%.*|\(.*\)|★.*|구성 별 정보.*|판매처.*|신고하기|정보\s*수정\s*요청|.*>.*)$/i;
   const srcOf = i => [i.currentSrc, i.src, i.dataset && i.dataset.src, i.getAttribute("data-src")].find(u => u && /^https?:/.test(u)) || "";
-  const items = boxes.map(box => {
+  const items = boxes.map((box, idx) => {
+    box.setAttribute("data-hgg-idx", String(idx));
+    const alts = [...box.querySelectorAll("img[alt]")].map(i => i.alt).filter(Boolean).join("\n");
     const lines = (box.innerText || "").split("\n").map(l => l.trim()).filter(Boolean);
     const links = [...box.querySelectorAll("a")].map(a => (a.innerText || "").trim()).filter(t => t.length >= 8 && !/신고|수정요청|구매정보|전체보기/.test(t));
     const title = links[0] || lines.find(l => l.length >= 10) || "";
@@ -52,7 +54,7 @@ async function collectNaver() {
     const names = after.map(l => l.replace(/\s*[\d,]+원?$/, "").trim()).filter(l => l && !SKIP.test(l) && l.length <= 30);
     const im = [...box.querySelectorAll("img")].find(i => srcOf(i) && !/icon|logo|badge|npay/i.test(srcOf(i)));
     return { title, mall: catalog ? "" : (names[0] || ""), mall_list: catalog ? names.join("\n") : "",
-             text: lines.join("\n").slice(0, 1500), img: im ? srcOf(im) : "" };
+             text: lines.join("\n").slice(0, 1500), alts, idx, img: im ? srcOf(im) : "" };
   }).filter(it => it.title);
   const images = [...document.querySelectorAll("img")].map(i => ({ src: srcOf(i), alt: i.alt || "",
     text: ((i.closest("li, [class*=item]") || i.parentElement || {}).innerText || "").slice(0, 300) })).filter(x => x.src).slice(0, 300);
@@ -73,6 +75,11 @@ async function collectCoupang() {
   for (const a of document.querySelectorAll('a[href*="/vp/products/"]')) {
     const card = a.closest("li") || a.parentElement;
     if (!card || cards.has(card)) continue;
+    // 화면에 실제로 보이는 상품 칸만 (숨겨진 빈 칸·자리표시 칸은 순위에서 뺀다)
+    const r = card.getBoundingClientRect();
+    const cs = getComputedStyle(card);
+    if (r.width < 50 || r.height < 50 || cs.display === "none" || cs.visibility === "hidden" || Number(cs.opacity) === 0) continue;
+    if (!/[\d,]+\s*원/.test(card.innerText || "")) continue;   // 가격이 없는 칸은 상품이 아님
     cards.set(card, a);
   }
   const groups = new Map();
@@ -101,9 +108,52 @@ async function collectCoupang() {
     const im = [...box.querySelectorAll("img")].find(i => srcOf(i));
     let img = im ? srcOf(im) : "";
     if (img.startsWith("//")) img = "https:" + img;
-    items.push({ product_id: m[1], ids, name, price: priceM ? priceM[1] : "", img });
+    box.setAttribute("data-hgg-idx", String(items.length));
+    items.push({ idx: items.length, product_id: m[1], ids, name, price: priceM ? priceM[1] : "", img,
+                 alts: [...box.querySelectorAll("img[alt]")].map(i => i.alt).filter(Boolean).join("\n") });
   }
   return { blocked, url: location.href, items };
+}
+
+// ---------------------------------------------------------------- 우리 상품 칸 캡처 (썸네일)
+let OURS = { brands: [], ids: [] };
+const norm = x => (x || "").replace(/\s+/g, "").toLowerCase();
+function isOurs(it) {
+  const t = norm([it.title, it.name, it.mall, it.mall_list, it.text, it.alts].join(" "));
+  return OURS.brands.some(b => b && t.includes(norm(b))) || (it.ids || []).some(id => OURS.ids.includes(id));
+}
+let capLock = Promise.resolve();
+function withLock(fn) { const p = capLock.then(fn, fn); capLock = p.catch(() => {}); return p; }
+
+async function captureItem(tabId, idx) {
+  return withLock(async () => {
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      await chrome.windows.update(tab.windowId, { focused: true });   // 가려진 창은 화면이 안 그려져서 잠깐 앞으로
+      const r = (await chrome.scripting.executeScript({ target: { tabId }, args: [idx], func: (i) => {
+        const el = document.querySelector(`[data-hgg-idx="${i}"]`);
+        if (!el) return null;
+        el.scrollIntoView({ block: "center" });
+        const b = el.getBoundingClientRect();
+        return { x: b.left, y: b.top, w: b.width, h: b.height, dpr: window.devicePixelRatio || 1 };
+      } }))[0].result;
+      if (!r) return "";
+      await sleep(900);
+      const shot = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 80 });
+      const bmp = await createImageBitmap(await (await fetch(shot)).blob());
+      const side = Math.min(r.w, r.h);              // 칸의 왼쪽 위 정사각형 = 상품 사진 자리
+      const c = document.createElement("canvas"); c.width = 180; c.height = 180;
+      c.getContext("2d").drawImage(bmp, r.x * r.dpr, Math.max(0, r.y) * r.dpr, side * r.dpr, side * r.dpr, 0, 0, 180, 180);
+      return c.toDataURL("image/jpeg", 0.8);
+    } catch (e) { return ""; }
+  });
+}
+
+async function addShots(tabId, data) {
+  for (const it of (data.items || [])) {
+    if (isOurs(it)) { it.ours_js = true; it.shot = await captureItem(tabId, it.idx); }
+  }
+  try { await chrome.scripting.executeScript({ target: { tabId }, func: () => window.scrollTo(0, 0) }); } catch (e) {}
 }
 
 // ---------------------------------------------------------------- 실행
@@ -184,23 +234,25 @@ async function runSite(site, run, kws, wantIncog) {
         await sleep(2000);
         try { data = (await chrome.scripting.executeScript({ target: { tabId }, func: S.collect }))[0].result; } catch (e) {}
       }
+      if (!data.blocked && !data.login) await addShots(tabId, data);
       try {
         await fetch(API + "/result", { method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ run_id: run, site, keyword: kw, incognito: w.incog, ...data }) });
       } catch (e) { log("순위 확인 프로그램과 연결이 끊겼어요. run.bat 이 켜져 있는지 확인해 주세요.", "err"); break; }
       if (data.blocked) { log(`[${S.label}] 접속이 제한됐어요. ${S.label} 확인을 멈출게요. 몇 시간 뒤에 다시 해 주세요.`, "err"); break; }
       log(`[${S.label}] '${kw}' 완료 (${(data.items || []).length}개 상품) — 탭은 남겨 둘게요`, "ok");
-      if (i < kws.length - 1) await sleep(15000 + Math.random() * 15000);
+      if (i < kws.length - 1) await sleep(site === "naver" ? 60000 + Math.random() * 60000 : 15000 + Math.random() * 15000);
     }
   } catch (e) { log(`[${S.label}] 오류로 멈췄어요: ${e.message}`, "err"); }
 }
 
 async function start(run, kws, sites, auto) {
   btn.disabled = true; logBox.innerHTML = "";
+  try { OURS = await (await fetch(API + "/ours")).json(); } catch (e) {}
   let wantIncog = false;
   try { wantIncog = await chrome.extension.isAllowedIncognitoAccess(); } catch (e) {}
   log(wantIncog ? "웨일 시크릿 창에서 키워드마다 새 탭으로 검색할게요. (끝나도 탭은 남겨 둬요)" : "⚠️ 시크릿 창 사용이 허용되지 않아 일반 창으로 검색해요.", wantIncog ? "" : "err");
-  log(`키워드 ${kws.length}개 × ${sites.map(s => SITES[s].label).join("·")} (키워드 사이에 15~30초씩 쉬어요)`);
+  log(`키워드 ${kws.length}개 × ${sites.map(s => SITES[s].label).join("·")} (쿠팡은 키워드 사이 15~30초, 네이버는 차단을 피하려고 1~2분씩 쉬어요)`);
   await Promise.all(sites.map(s => runSite(s, run, kws, wantIncog)));
   try { await fetch(API + "/done", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ run_id: run }) }); } catch (e) {}
   log("끝났어요! 순위 확인 프로그램 화면에 자동으로 반영돼요. 검색한 창·탭은 비교해 보시라고 남겨 뒀어요.", "ok");
