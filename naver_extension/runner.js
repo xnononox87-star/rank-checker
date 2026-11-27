@@ -259,7 +259,7 @@ async function runSite(site, run, kws, wantIncog) {
       } catch (e) { log("순위 확인 프로그램과 연결이 끊겼어요. run.bat 이 켜져 있는지 확인해 주세요.", "err"); break; }
       if (data.blocked) { log(`[${S.label}] 접속이 제한됐어요. ${S.label} 확인을 멈출게요. 몇 시간 뒤에 다시 해 주세요.`, "err"); break; }
       log(`[${S.label}] '${kw}' 완료 (${(data.items || []).length}개 상품) — 탭은 남겨 둘게요`, "ok");
-      if (i < kws.length - 1) await sleep(site === "naver" ? 60000 + Math.random() * 60000 : 15000 + Math.random() * 15000);
+      if (i < kws.length - 1) await sleep(site === "naver" ? 60000 + Math.random() * 60000 : 40000 + Math.random() * 40000);
     }
   } catch (e) { log(`[${S.label}] 오류로 멈췄어요: ${e.message}`, "err"); }
 }
@@ -270,7 +270,7 @@ async function start(run, kws, sites, auto) {
   let wantIncog = false;
   try { wantIncog = await chrome.extension.isAllowedIncognitoAccess(); } catch (e) {}
   log(wantIncog ? "웨일 시크릿 창에서 키워드마다 새 탭으로 검색할게요. (끝나도 탭은 남겨 둬요)" : "⚠️ 시크릿 창 사용이 허용되지 않아 일반 창으로 검색해요.", wantIncog ? "" : "err");
-  log(`키워드 ${kws.length}개 × ${sites.map(s => SITES[s].label).join("·")} (쿠팡은 키워드 사이 15~30초, 네이버는 차단을 피하려고 1~2분씩 쉬어요)`);
+  log(`키워드 ${kws.length}개 × ${sites.map(s => SITES[s].label).join("·")} (차단을 피하려고 키워드 사이 쿠팡 40~80초, 네이버 1~2분씩 쉬어요)`);
   await Promise.all(sites.map(s => runSite(s, run, kws, wantIncog)));
   try { await fetch(API + "/done", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ run_id: run }) }); } catch (e) {}
   log("끝났어요! 순위 확인 프로그램 화면에 자동으로 반영돼요. 검색한 창·탭은 비교해 보시라고 남겨 뒀어요.", "ok");

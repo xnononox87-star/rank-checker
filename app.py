@@ -135,7 +135,19 @@ with tab1:
         st.caption("웨일 확장이 **쿠팡 창·네이버 창**을 하나씩 열고 키워드마다 **새 탭**으로 검색해요. 끝나도 탭은 남겨 두니 결과와 비교해 보세요. 웨일이 켜져 있어야 해요.")
     st.caption(f"'상단' = 1페이지 {cfg['top_n']}위 이내 · 순위는 1페이지 안에서 몇 번째인지예요. 같은 상품을 여러 개 등록했다면 모두 표시돼요.")
 
-    if st.button("▶ 순위 확인 시작", type="primary", disabled=not kws):
+    # 차단 방지: 마지막 확인 후 6시간 안에는 한 번 더 확인을 받는다
+    _hist = E.load_history()
+    _last = _hist[-1]["time"] if _hist else ""
+    _recent = False
+    try:
+        _recent = bool(_last) and (dt.datetime.now() - dt.datetime.strptime(_last[:16], "%Y-%m-%d %H:%M")).total_seconds() < 6 * 3600
+    except Exception:
+        pass
+    _ok_again = True
+    if _recent:
+        st.warning(f"마지막 확인이 {_last}이에요. 하루 한 번(오전)만 돌려야 네이버·쿠팡 차단을 피할 수 있어요.")
+        _ok_again = st.checkbox("그래도 지금 한 번 더 확인할게요", value=False)
+    if st.button("▶ 순위 확인 시작", type="primary", disabled=(not kws) or (not _ok_again)):
         run_time = E.now_str()
         prev = st.session_state.get("last") or {}
         res = {"time": run_time, "naver": {}, "coupang": {}}
@@ -166,7 +178,7 @@ with tab1:
                 if time.time() - t0 > 1200:
                     wait_box.warning("네이버 확인이 오래 걸려서 기다리기를 멈췄어요. 끝나면 [네이버 결과 불러오기]를 눌러 주세요.")
                     break
-                wait_box.info(f"웨일에서 확인 중... ({n}/{len(kws) * (int(w_naver) + int(w_coupang))}) · 네이버는 차단을 피하려고 키워드 사이 1~2분씩 쉬어서 10분쯤 걸려요")
+                wait_box.info(f"웨일에서 확인 중... ({n}/{len(kws) * (int(w_naver) + int(w_coupang))}) · 차단을 피하려고 키워드 사이를 띄워서 10~15분쯤 걸려요. 다른 일 하셔도 돼요")
                 time.sleep(3)
             wait_box.empty()
             st.session_state["last"] = res
